@@ -1,14 +1,14 @@
--- 1. Panggil Framework R&8_DV v6.2 (Jangan ubah link karena di-load via GitHub RAW)
-local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r%268_dv.lua"))()
+-- 1. Panggil Framework R&8_DV (Link GitHub RAW dipertahankan sesuai repo)
+local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/R8_DV_ImGui.lua"))()
 
--- 2. Inisialisasi Standar (Scale, Font Jersey25, 2.5D/3D Gradient Text, Illustrated Loader & Layout 3 Sisi)
+-- 2. Inisialisasi Jendela Minimalist Monochrome dengan 2.5D / 3D Colourful Typography
+-- Logo GitHub, Vector Icon, Smooth Loader, dan Single-Border Popup Minimize Icon diurus otomatis!
 local UI = ImGui({
     Title = "DRY CURSED  -  IMGUI",
-    Theme = "Blue Night Sky",     -- Pilihan 5 Tema: "Blue Night Sky" | "Orange Sand" | "Midnight Monokai" | "Sakura Cyber Neon" | "Emerald Aurora"
-    CheckboxStyle = "Modern",     -- Pilihan default: "Modern" | "Classic" | "Biasa"
-    LetterSpacing = 0,
-    Text3D = true,                -- Aktifkan 2.5D / 3D Colourful Gradient Text yang ringan
-    AutoLoading = true            -- Aktifkan Illustrated Animated Loader yang nyaman
+    Theme = "Minimalist Monochrome", -- "Minimalist Monochrome" | "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai"
+    CheckboxStyle = "Modern",        -- "Modern" (Pill Switch) | "Checkbox" (Square Check)
+    Text3D = true,                   -- Aktifkan 2.5D / 3D Colourful Gradient Text (Ringan, 0% FPS Drop)
+    AutoLoading = true
 }).Call(3)
 
 local feature = UI.feature
@@ -16,167 +16,230 @@ local function center(fn) return fn end
 local function right(fn) return fn end
 
 -- =========================================================================
--- FEATURE 1: HOME (Tengah + Illustrated Canvas + Panel Pengaturan Kanan)
+-- KATEGORI 1: OVERVIEW
 -- =========================================================================
+UI:Category("Overview")
+
 feature("Home", "Home")({
     center = center(function(c)
-        c:Header("Home", "Welcome back, keep going!", "v6.2 Ready")
-
-        -- Canvas Ilustrasi Animasi 2.5D yang ringan & nyaman dilihat
-        c:IllustratedCanvas({
-            Tag = "2.5D ILLUSTRATED",
-            Title = "Colourful 3D Gradient Engine",
-            Subtitle = "5 Dynamic Themes • Smooth Orbital Canvas • Lightweight Shaders",
-            Height = 108
-        })
+        c:Header("Home", "Minimalist monochrome surface with colourful 2.5D / 3D typography", "Game Ready")
 
         c:StatRow({
-            { Icon = "Bolt",   Label = "Status",  Value = "Safe" },
-            { Icon = "Clock",  Label = "Runtime", Value = "00:12:34" },
-            { Icon = "Shield", Label = "Version", Value = "v6.2.0" }
+            { Icon = "Shield", Label = "Status",  Value = "Undetected" },
+            { Icon = "Bolt",   Label = "Render",  Value = "0% FPS Drop" },
+            { Icon = "Clock",  Label = "Engine",  Value = "v5.0 Minimal" }
         })
 
-        local QuickCard = c:Card("Quick Actions", "View All", "Bolt")
+        local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt")
         QuickCard:ActionGrid({
             { Icon = "AutoFarm",  Name = "Auto Farm",     Flag = "QuickAutoFarm" },
             { Icon = "Teleports", Name = "Teleport",      Flag = "QuickTP" },
-            { Icon = "Visuals",   Name = "ESP",           Flag = "QuickESP" },
-            { Icon = "Speed",     Name = "Speed Hack",    Flag = "QuickSpeed" },
+            { Icon = "Visuals",   Name = "ESP Box",       Flag = "QuickESP" },
+            { Icon = "Speed",     Name = "Speed Override",Flag = "QuickSpeed" },
             { Icon = "Jump",      Name = "Infinite Jump", Flag = "QuickInfJump" },
             { Icon = "Collect",   Name = "Collect All",   Flag = "QuickCollect" }
         })
 
-        local ActivityCard = c:Card("Recent Activity", "View Logs", "Clock")
+        local ActivityCard = c:Card("Recent Activity", "Live Logs", "Clock")
         ActivityCard:ActivityTimeline({
-            { Text = "Jersey25 Font & 3D Gradient Text Loaded", Time = "Just now" },
-            { Text = "5 Colourful Themes Initialized",          Time = "1m ago" },
-            { Text = "Auto Farm Activated",                     Time = "2m ago" },
-            { Text = "Teleported to Spawn",                     Time = "5m ago" }
+            { Text = "R&8_DV Minimalist v5.0 Initialized", Time = "Just now" },
+            { Text = "2.5D / 3D Colourful Font Active",    Time = "1m ago" },
+            { Text = "Single-Border Popup Icon Ready",     Time = "2m ago" },
+            { Text = "GitHub Master Crest Cached",         Time = "4m ago" }
         })
     end),
 
+    -- Panel Kanan Global (Otomatis tampil di tab yang tidak memiliki panel kanan khusus)
     right = right(function(r)
-        r:Section("Settings", "Settings")
-
-        r:Section("Theme & 3D Colourful Palette")
-        r:Dropdown("Color Theme", "ThemeSelect", {
-            "Blue Night Sky",
-            "Orange Sand",
-            "Midnight Monokai",
-            "Sakura Cyber Neon",
-            "Emerald Aurora"
-        }, "Blue Night Sky", function(selectedTheme)
+        r:Section("Theme & Typography", "Palette")
+        r:Dropdown("Color Style", "ThemeSelect", UI:GetThemes(), "Minimalist Monochrome", function(selectedTheme)
             UI:SetTheme(selectedTheme)
         end)
+        r:Toggle("2.5D / 3D Colourful Font", "Text3DToggle", true, function(state)
+            UI:SetText3D(state)
+        end)
+        r:Dropdown("Checkbox Style", "CheckboxStyleMode", {
+            "Modern",
+            "Checkbox"
+        }, "Modern", function(mode)
+            UI:SetCheckboxStyle(mode)
+        end)
 
-        r:Section("General")
-        r:Slider("UI Scale", "UIScalePct", 65, 130, 100, "%", function(val)
+        r:Section("Window & Layout", "Sliders")
+        r:Slider("UI Scale", "UIScalePct", 60, 130, 100, "%", function(val)
             UI:SetScale(val / 100)
         end)
-        r:Slider("Transparency", "BgTransPct", 0, 60, 4, "%", function(val)
+        r:Slider("Transparency", "BgTransPct", 0, 55, 4, "%", function(val)
             UI:SetTransparency(val / 100)
-        end)
-        -- Mengubah bentuk seluruh Checkbox secara real-time ("Modern", "Classic", "Biasa")
-        r:Dropdown("Checkbox Style", "ChkStyle", {
-            "Modern",
-            "Classic",
-            "Biasa"
-        }, "Modern", function(selectedStyle)
-            UI:SetCheckboxStyle(selectedStyle)
         end)
         r:Toggle("Lock Position", "LockPosition", false)
         r:Toggle("Rounded Borders", "RoundedState", true, function(state)
             UI:SetRounded(state)
         end)
+        r:Keybind("Toggle Menu Key", "MenuHotkey", Enum.KeyCode.RightShift, function(newKey)
+            if newKey then
+                UI.ToggleKey = newKey
+            end
+        end)
 
-        r:Section("Performance")
+        r:Section("Performance", "Bolt")
         r:Toggle("FPS Boost", "FPSBoost", false)
         r:Toggle("Reduce Effects", "ReduceEffects", false)
-
-        r:Section("Other")
-        r:Toggle("Notifications", "NotifyToggle", true)
-        r:Stepper("Target Priority", "PriorityLevel", 1, 1)
     end)
 })
 
 -- =========================================================================
--- FEATURE 2: AUTO FARM (Mendemonstrasikan 3 Bentuk Checkbox Sekaligus)
+-- KATEGORI 2: MODULES (SESUAI REFERENSI MENU)
 -- =========================================================================
-feature("AutoFarm", "Auto Farm")({
+UI:Category("Modules")
+
+-- Tab Combat (Referensi Card dengan Subtitle & Master Header Switch + Keybind)
+feature("Combat", "Combat")({
     center = center(function(c)
-        c:Header("Auto Farm", "Compare all 3 checkbox designs & farming controls", "Active")
+        c:Header("Combat", "Target assistance, response policy & keybind limits", "Targets")
 
-        local StyleCard = c:Card("3 Checkbox Variations Demo", "Interactive", "AutoFarm")
-        StyleCard:Toggle("Modern Switch Style", "DemoModern", true, nil, "Modern")
-        StyleCard:Toggle("Classic Checkmark Box", "DemoClassic", true, nil, "Classic")
-        StyleCard:Toggle("Desain Biasa (ON / OFF)", "DemoBiasa", false, nil, "Biasa")
+        local TargetCard = c:Card("Target Selection", nil, "Target", {
+            Subtitle = "Choose which targets assistance follows",
+            ToggleFlag = "MasterTargetSelection",
+            Default = true
+        })
+        TargetCard:Toggle("Visible Targets", "VisibleTargets", true)
+        TargetCard:Toggle("Skip Teammates", "SkipTeammates", true)
+        TargetCard:Toggle("Prefer Nearest", "PreferNearest", false)
+        TargetCard:Slider("Detection Radius", "DetectionRadius", 20, 360, 120, " px")
+        TargetCard:Dropdown("Target Priority", "TargetPriorityMode", {
+            "Automatic",
+            "Closest to Crosshair",
+            "Lowest Health",
+            "Nearest Distance"
+        }, "Automatic")
 
-        local ConfigCard = c:Card("Farming Parameters", "Presets", "Sliders")
-        ConfigCard:Dropdown("Farm Mode", "FarmModeSelect", {
-            "Nearest Mob",
-            "Boss Only",
-            "Quest Target",
-            "Resource Node"
-        }, "Nearest Mob")
-        ConfigCard:Slider("Attack Distance", "FarmDist", 5, 50, 20, " studs")
-        ConfigCard:Stepper("Loop Priority", "LoopPrio", 2, 1)
+        local ProfileCard = c:Card("Aimbot Profile", nil, "Shield", {
+            Subtitle = "Activation keybind and smoothing behaviour",
+            ToggleFlag = "MasterAimProfile",
+            Default = false
+        })
+        ProfileCard:Keybind("Activation Key", "AimActivationKey", Enum.KeyCode.Q)
+        ProfileCard:Slider("Response Smoothness", "AimSmoothness", 0.10, 1.00, 0.50, "x", nil, 0.05)
+        ProfileCard:Stepper("Target Priority Slot", "PriorityLevel", 1, 1)
     end)
 })
 
--- =========================================================================
--- FEATURE LAINNYA
--- =========================================================================
-feature("Teleports", "Teleports")({
+-- Tab Auto Farm (Referensi Interactive Feature Hover Cards + 5x5 Tile Breaker Grid)
+feature("Bot", "Auto Farm")({
     center = center(function(c)
-        c:Header("Teleports", "Instant coordinate & player warping", "Ready")
-        local Card = c:Card("Destination", nil, "Teleports")
-        Card:Input("Target Player", "TpTarget", "Username...", "")
-        Card:Dropdown("Zone Select", "TpZone", {
-            "Spawn Island",
-            "Crystal Cavern",
-            "Volcano Fortress",
-            "Sky Sanctuary"
-        }, "Spawn Island")
+        c:Header("Automation", "Interactive hover cards & automated farming routines", "Active")
+
+        c:FeatureCard({
+            Icon = "Bot",
+            Title = "Autofarm",
+            Description = "Automatically farming without effort touching the screen.",
+            Flag = "CardAutofarm",
+            Default = true
+        })
+
+        c:FeatureCard({
+            Icon = "Chat",
+            Title = "Spammer",
+            Description = "Automatically send chat messages without typing manually.",
+            Flag = "CardSpammer",
+            Default = false
+        })
+
+        c:FeatureCard({
+            Icon = "Collect",
+            Title = "Collect",
+            Description = "Automation utility for collecting nearby dropped items.",
+            Flag = "CardCollect",
+            Default = false
+        })
+
+        c:FeatureCard({
+            Icon = "Fish",
+            Title = "Fishing",
+            Description = "Automatically pull rod when fish bite is detected.",
+            Flag = "CardFishing",
+            Default = false
+        })
+    end),
+
+    right = right(function(r)
+        r:Section("Autofarm Matrix", "Grid")
+        local TileCard = r:Card("Block to Break", nil, "Bot", {
+            Subtitle = "Configure target block & surrounding break matrix"
+        })
+        TileCard:Input("Target Block", "BlockToBreak", "Block name...", "Bountiful Lattice Fence")
+        TileCard:Slider("Hit Delay", "FarmHitDelay", 60, 400, 160, " ms")
+        TileCard:TileGrid("Select tile to break (P = Player)", "BreakMatrix", 5, 5)
     end)
 })
 
-feature("Player", "Player")({
-    center = center(function(c)
-        c:Header("Player", "Character movement overrides", "LocalPlayer")
-        local Card = c:Card("Movement", nil, "Player")
-        Card:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, "")
-        Card:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, "")
-        Card:Toggle("Infinite Jump", "InfJumpToggle", false)
-    end)
-})
-
+-- Tab Visuals (Referensi Player Geometry & Overlay Style Cards)
 feature("Visuals", "Visuals")({
     center = center(function(c)
-        c:Header("Visuals", "ESP and camera field of view", "Render")
-        local Card = c:Card("Visual Settings", nil, "Visuals")
-        Card:Toggle("Player Box ESP", "BoxESP", false)
-        Card:Toggle("Tracer Lines", "TracerESP", false)
-        Card:Slider("Field of View", "CameraFOV", 70, 120, 70, " deg")
+        c:Header("Visuals", "Player geometry, status flags & world overlay style", "Overlay")
+
+        local GeoCard = c:Card("Player Geometry", nil, "Visuals", {
+            Subtitle = "Bounding box, skeleton and health bar indicators",
+            ToggleFlag = "MasterPlayerGeo",
+            Default = true
+        })
+        GeoCard:Toggle("Bounding Box", "BoxESP", true)
+        GeoCard:Toggle("Skeleton Overlay", "SkeletonESP", false)
+        GeoCard:Toggle("Health Bar", "HealthBarESP", true)
+        GeoCard:Slider("Display Range", "ESPRange", 50, 1000, 450, "m")
+
+        local StyleCard = c:Card("Overlay Style", nil, "Palette", {
+            Subtitle = "Customize ESP stroke thickness and health bar mode"
+        })
+        StyleCard:Slider("Line Width", "ESPLineWidth", 1.0, 4.0, 1.5, " px", nil, 0.5)
+        StyleCard:Dropdown("Health Style", "ESPHealthStyle", {
+            "Gradient",
+            "Solid",
+            "Minimal"
+        }, "Gradient")
     end)
 })
 
+-- Tab Player & Teleports
+feature("Player", "Player")({
+    center = center(function(c)
+        c:Header("Player & World", "Character movement overrides and instant teleportation", "LocalPlayer")
+
+        local MoveCard = c:Card("Movement Overrides", nil, "Speed", {
+            Subtitle = "Adjust WalkSpeed and JumpPower safely"
+        })
+        MoveCard:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, "", function(val)
+            local char = game.Players.LocalPlayer and game.Players.LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = val end
+        end)
+        MoveCard:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, "", function(val)
+            local char = game.Players.LocalPlayer and game.Players.LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.JumpPower = val end
+        end)
+
+        local TpCard = c:Card("Destination Warp", nil, "Teleports", {
+            Subtitle = "Instant player & world coordinate warping"
+        })
+        TpCard:Input("Target Player", "TpTarget", "Username...", "")
+        TpCard:Button("Warp to Target Player", "EXECUTE", "Teleports", function()
+            print("[R&8_DV] Teleport target:", UI:GetValue("TpTarget"))
+        end)
+    end)
+})
+
+-- Tab Misc
 feature("Misc", "Misc")({
     center = center(function(c)
-        c:Header("Misc", "Additional utility tools", "Utils")
-        local Card = c:Card("Server Utilities", nil, "Misc")
-        Card:Toggle("Anti-AFK", "AntiAFK", true)
-        Card:Toggle("Auto Rejoin on Kick", "AutoRejoin", false)
-    end)
-})
-
-feature("Sliders", "Settings")({
-    center = center(function(c)
-        c:Header("Settings", "Framework configuration & theme preview", "v6.2")
-        c:IllustratedCanvas({
-            Tag = "THEME ENGINE",
-            Title = "5 Custom Colourful Palettes",
-            Subtitle = "Blue Night Sky • Orange Sand • Midnight Monokai • Sakura Cyber Neon • Emerald Aurora",
-            Height = 104
+        c:Header("Misc", "Additional utility shortcuts & configuration tools", "Utility")
+        local UtilCard = c:Card("Session Utilities", nil, "Misc", {
+            Subtitle = "Quick server & interface actions"
         })
+        UtilCard:Toggle("Notifications", "NotifyToggle", true)
+        UtilCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
+            UI:MinimizeToIcon()
+        end)
     end)
 })

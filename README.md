@@ -1,169 +1,183 @@
-# R&8_DV ImGui Framework (v6.2)
+# R&8_DV ImGui Framework (v5.0 — Minimalist Monochrome & 2.5D/3D Colourful Typography)
 
-Framework **R&8_DV ImGui v6.2** adalah arsitektur UI Roblox berbasis Luau dengan desain **Colourful 2.5D / 3D Gradient Text**, **Illustrated Animated Canvas**, **Illustrated Smooth Loader**, serta tata letak 2 atau 3 panel yang ringan dan responsif.
-
----
-
-## Daftar Pembaruan & Perbaikan Bug (v6.2)
-
-1. **Perbaikan Crash `GetReadableTextColor`**: Menambahkan fungsi kalkulasi kontras luminansi `GetReadableTextColor` yang sebelumnya belum terdefinisi saat `BindTheme` dan `SetTheme` dipanggil.
-2. **Perbaikan Transparansi Panel Utama (`BgTransparency`)**: Memisahkan transparansi `MainWindow` (`1` / transparan penuh tanpa kotak latar belakang) dengan transparansi panel (`0.04` default), sehingga `LeftSidebar`, `TopBar`, `CenterPanel`, dan `RightPanel` langsung tampil jelas sejak awal.
-3. **Penghapusan Duplicate Border Color pada Popup Icon Menu**: Menghapus layer bezel ganda (`MinInnerBezel`) dan double stroke pada tombol *Floating Shortcut* (`R8DV_FloatingShortcut`), opsi `Dropdown`, `NavBtn`, serta `BarFill`/`Slider Fill` sehingga setiap elemen hanya memiliki **1 border bersih**.
-4. **2.5D & 3D Colourful Gradient Text (Tetap Ringan)**: Menggunakan kombinasi `TextColor3` putih murni + `UIGradient` 3-titik warna (`TextGradTop`, `TextGradMid`, `TextGradBot` / `Accent3D` / `Body25D`) + 1 `UIStroke` bayangan kontekstual (`DepthShadow`) tanpa menduplikasi `TextLabel`.
-5. **5 Tema Warna Colourful Sesuai Nama Tema**:
-   - `Blue Night Sky` — Biru malam safir dengan gradasi langit sian & biru elektrik.
-   - `Orange Sand` — Gurun senja hangat dengan gradasi emas pasir & oranye matahari.
-   - `Midnight Monokai` — Charcoal gelap Monokai dengan aksen hijau neon, sian, dan magenta.
-   - `Sakura Cyber Neon` — Ungu malam beludru dengan gradasi merah muda bunga sakura & neon rose.
-   - `Emerald Aurora` — Hijau pinus kutub dengan gradasi zamrud aurora & kristal mint.
-6. **Illustrated Animated Canvas & Loader Nyaman**:
-   - Loader awal (`RunInternalLoader`) dilengkapi ilustrasi cincin orbital, partikel geometris melayang, persentase real-time, dan transisi *fade-out* halus.
-   - Widget baru `c:IllustratedCanvas({...})` untuk menampilkan ilustrasi lanskap geometris & matahari/orbital 2.5D beranimasi lembut di dalam halaman.
-7. **Perbaikan Live UI Scale & Dropdown Interaktif**: Menambahkan `UI:SetScale(scale)` untuk mengubah ukuran UI secara langsung dan membuat `Dropdown` membuka daftar pilihan interaktif dengan animasi chevron.
+Framework **R&8_DV ImGui v5.0** adalah arsitektur UI Roblox berbasis Luau dengan pendekatan **Minimalist Monochrome Surface** (tanpa animasi berlebih / **0% FPS Drop**), **2.5D & 3D Colourful Gradient Typography** dengan proporsi font **Bold** yang tegas dan mudah dibaca, **Card & Feature Card Hover Micro-Interactions**, serta **5 Tema Warna** yang disesuaikan langsung dengan nama temanya.
 
 ---
 
-## Cara Penggunaan Cepat (Via GitHub RAW)
+## Ringkasan Perbaikan Bug & Fitur Baru (v5.0)
+
+1. **Penghapusan Duplicate Border Color pada Popup Icon Menu & Seluruh Elemen**:
+   - Menghapus `MinInnerBezel` dan `MinInnerStroke` pada *Floating Popup Icon* (`R8DV_FloatingSquircle`), sehingga ikon popup kini hanya memiliki **1 border bersih (`UIStroke`)** yang menyala halus saat *hover*.
+   - Menghapus double `UIStroke` pada `MainWindow` vs `BannerLayer`, `Slider Fill`, `Loader BarFill`, serta opsi `Dropdown` ketika tertutup.
+2. **2.5D & 3D Colourful Gradient Font (Tetap Sangat Ringan — Zero FPS Drop)**:
+   - Setiap judul, header kartu, nilai statistik, tab aktif, dan label kontrol menu menggunakan kombinasi **1 `TextLabel` + 1 `UIGradient` statis 3-titik warna + 1 `UIStroke` bayangan kedalaman (`TextShadow`)** tanpa menduplikasi layer teks dan tanpa *loop* `RenderStepped`/`Heartbeat`.
+   - Proporsi ukuran dan ketebalan font ditingkatkan ke **`GothamBlack` / `GothamBold`** agar hierarki menu terlihat tegas seperti menu ImGui modern.
+3. **5 Tema Warna Sesuai Nama Tema (Berbasis Minimalist Monochrome Surface)**:
+   - Permukaan kartu tetap gelap minimalis dan nyaman di mata, sementara aksen kontrol dan gradasi font 2.5D/3D berubah penuh warna sesuai nama tema:
+     1. **`Minimalist Monochrome`** — Obsidian & Graphite dengan gradasi font *Platinum Chrome / Titanium Ice* serta switch putih kontras tinggi.
+     2. **`Blue Night Sky`** — Midnight Abyss dengan gradasi font *Starlight Ice → Sky Cyan → Deep Sapphire*.
+     3. **`Violet Amethyst`** — Deep Onyx Plum dengan gradasi font *Pearl Rose → Lavender Neon → Royal Amethyst*.
+     4. **`Orange Sand`** — Matte Basalt Espresso dengan gradasi font *Sunlit Ivory → Golden Sand → Sunset Amber*.
+     5. **`Midnight Monokai`** — Monokai Charcoal dengan gradasi font *Crisp Mint → Monokai Lime → Cyber Emerald*.
+4. **Event-Driven Micro-Interactions & Card Hover**:
+   - Seluruh animasi bersifat *event-driven* (`0.12s–0.18s` `Quart Out`, **0% CPU saat diam**), mencakup *Card Hover* (elevasi warna kartu & border), *FeatureCard Hover & Active Highlight*, *Slider Circular Thumb Scale*, *Dropdown Chevron Rotation*, *Sidebar Vertical Pill Indicator*, dan *Button Tactile Press*.
+   - Mendukung mode **`FPS Boost` / `Reduce Effects`** yang otomatis mematikan tween transisi untuk perangkat spesifikasi rendah.
+5. **Perbaikan Bug Fungsional pada Engine**:
+   - **Perbaikan `UI Scale` Live**: Baik `UI:SetScale(scale)` maupun `UI.UIScale = scale` kini langsung memperbarui skala jendela secara *real-time*.
+   - **Perbaikan Sinkronisasi Warna `Toggle`, `ActionGrid`, & Tab saat Ganti Tema**: Status aktif (`ON`/`OFF`) tidak lagi ter-reset warnanya saat `UI:SetTheme(...)` dipanggil.
+   - **Perbaikan Tumpukan `RightPanel`**: Memperbaiki bug di mana halaman panel kanan saling bertumpuk saat berpindah antar tab.
+   - **Perbaikan `Dropdown` Interaktif & `Slider` Presisi**: `Dropdown` kini membuka daftar pilihan yang bisa diklik langsung (bukan sekadar *cycle* buta), dan `Slider` mendukung angka desimal (`step`) serta memiliki *circular thumb knob* tanpa risiko *division-by-zero*.
+   - **Pembersihan Koneksi Otomatis (`UI:Destroy()`)**: Mencegah kebocoran memori (*memory leak*) pada `UserInputService` saat script dijalankan ulang.
+
+---
+
+## Cara Penggunaan (Via GitHub RAW)
+
+> **Catatan:** Link GitHub RAW dipertahankan sepenuhnya untuk pemanggilan aset & script langsung dari repositori GitHub.
 
 ```lua
--- 1. Load Framework via GitHub RAW (Jangan ubah link ini)
-local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r%268_dv.lua"))()
+-- 1. Panggil Framework R&8_DV (Jangan ubah link GitHub RAW Anda)
+local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/R8_DV_ImGui.lua"))()
+-- (Atau gunakan .../r%268_dv.lua sesuai nama file pada branch main GitHub Anda)
 
--- 2. Inisialisasi Jendela Utama
+-- 2. Inisialisasi Jendela Utama (3 Panel atau 2 Panel)
 local UI = ImGui({
     Title = "DRY CURSED  -  IMGUI",
-    Theme = "Blue Night Sky",     -- "Blue Night Sky" | "Orange Sand" | "Midnight Monokai" | "Sakura Cyber Neon" | "Emerald Aurora"
-    CheckboxStyle = "Modern",     -- "Modern" | "Classic" | "Biasa"
-    LetterSpacing = 0,
-    Text3D = true,                -- Teks 2.5D / 3D Berwarna
-    AutoLoading = true            -- Animasi Loading Ilustrasi
-}).Call(3)                        -- 3 Panel (Kiri, Tengah, Kanan) atau 2 Panel
+    Theme = "Minimalist Monochrome", -- Pilihan 5 tema tersedia di bawah
+    CheckboxStyle = "Modern",        -- "Modern" | "Checkbox"
+    Text3D = true,                   -- Teks berwarna 2.5D / 3D ringan
+    AutoLoading = true
+}).Call(3)
 ```
 
 ---
 
-## 5 Pilihan Tema Warna Colourful
+## Daftar 5 Tema Warna
 
-| Nama Tema | Karakteristik Warna Utama | Gradasi Teks 2.5D / 3D |
+| Nama Tema | Surface Dasar | Karakteristik Aksen & Gradasi Font 2.5D / 3D |
 | :--- | :--- | :--- |
-| **`Blue Night Sky`** | Midnight Sapphire (`#0A0E18`) & Azure (`#58A6FF`) | Putih Es → Sian Bintang → Biru Langit Malam |
-| **`Orange Sand`** | Desert Dusk (`#160F0C`) & Solar Amber (`#FF943A`) | Krem Terang → Emas Pasir → Oranye Senja |
-| **`Midnight Monokai`** | Monokai Charcoal (`#10110E`) & Neon Lime (`#A6E22E`) | Putih Gading → Hijau Monokai → Sian Elektrik |
-| **`Sakura Cyber Neon`** | Velvet Plum (`#140C18`) & Sakura Pink (`#FF5CB2`) | Putih Rose → Pink Pastel → Neon Magenta |
-| **`Emerald Aurora`** | Abyssal Pine (`#0A1412`) & Aurora Mint (`#2EE6A6`) | Putih Kristal → Mint Cahaya → Hijau Zamrud |
+| **`Minimalist Monochrome`** | Obsidian (`#0A0B0E`) & Graphite (`#13151B`) | Putih Platinum → Silver Chrome → Titanium Slate |
+| **`Blue Night Sky`** | Midnight Abyss (`#090C14`) & Slate (`#121826`) | Putih Es → Sian Langit (`#70CAFF`) → Biru Safir (`#3476FF`) |
+| **`Violet Amethyst`** | Onyx Plum (`#0B0A12`) & Velvet (`#161323`) | Putih Mutiara → Lavender Neon (`#C494FF`) → Ungu Amethyst (`#7C52FF`) |
+| **`Orange Sand`** | Basalt Espresso (`#0E0C0A`) & Warm Slate (`#1B1713`) | Gading Hangat → Emas Pasir (`#FFC666`) → Oranye Senja (`#EE7C2A`) |
+| **`Midnight Monokai`** | Monokai Obsidian (`#0C0D0B`) & Charcoal (`#171A16`) | Putih Mint → Hijau Monokai (`#B6F244`) → Zamrud Siber (`#2ED688`) |
 
-Ganti tema kapan saja secara *real-time* menggunakan:
+Mengganti tema secara langsung kapan saja:
 ```lua
-UI:SetTheme("Sakura Cyber Neon")
+UI:SetTheme("Violet Amethyst")
 ```
 
 ---
 
-## Dokumentasi API & Widget
+## Dokumentasi API Lengkap
 
 ### 1. Konfigurasi `ImGui(config)`
 
 | Parameter | Tipe | Default | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `Title` | `string` | `"DRY CURSED  -  IMGUI"` | Judul pada TopBar dan Loader |
-| `Theme` | `string` | `"Blue Night Sky"` | Nama tema warna awal (5 pilihan tersedia) |
-| `CheckboxStyle` | `string` | `"Modern"` | Bentuk toggle default: `"Modern"`, `"Classic"`, `"Biasa"` |
-| `Sides` | `number` | `3` | Jumlah kolom panel (`2` atau `3`) |
-| `Scale` | `number` | `1` | Skala ukuran UI (`0.5` – `1.5`) |
-| `BgTransparency` | `number` | `0.04` | Transparansi panel (`0` – `0.65`) |
-| `Text3D` | `boolean` | `true` | Mengaktifkan shader gradasi teks 2.5D/3D |
-| `AutoLoading` | `boolean` | `true` | Menjalankan animasi loading saat inisialisasi |
-| `ToggleKey` | `Enum.KeyCode` | `Enum.KeyCode.RightShift` | Tombol keyboard untuk buka/tutup menu |
+| `Title` | `string` | `"DRY CURSED  -  IMGUI"` | Judul utama pada TopBar dan Loader |
+| `Theme` | `string` | `"Blue Night Sky"` | Nama tema awal dari 5 pilihan tema |
+| `CheckboxStyle` | `string` | `"Modern"` | Gaya toggle: `"Modern"` (pill switch) atau `"Checkbox"` (kotak centang) |
+| `Text3D` | `boolean` | `true` | Mengaktifkan tipografi berwarna gradasi 2.5D / 3D |
+| `Sides` | `number` | `3` | Jumlah panel kolom (`2` atau `3`) |
+| `Scale` | `number` | `1` | Skala ukuran jendela (`0.5` – `1.5`) |
+| `Transparency` | `number` | `0.04` | Transparansi panel (`0` – `0.65`) |
+| `Rounded` | `boolean` | `true` | Sudut membulat pada jendela, kartu, dan kontrol |
+| `ReduceEffects` | `boolean` | `false` | Mode instan tanpa animasi tween (0% beban transisi) |
+| `ToggleKey` | `Enum.KeyCode` | `Enum.KeyCode.RightShift` | Tombol keyboard untuk menyembunyikan/menampilkan menu |
+| `AutoLoading` | `boolean` | `true` | Menjalankan layar preloader singkat saat inisialisasi |
 
 ### 2. Method Instance `UI`
 
-- `UI.Call(sideCount)` — Mengatur tata letak menjadi `2` atau `3` panel.
-- `UI:SetTheme(themeName)` — Mengganti tema warna secara *real-time*.
-- `UI:SetScale(scale)` — Mengubah skala ukuran jendela (`0.5` s/d `1.5`).
-- `UI:SetTransparency(alpha)` — Mengubah transparansi latar panel (`0` s/d `0.65`).
-- `UI:SetCheckboxStyle(styleName)` — Mengubah bentuk semua toggle (`"Modern"`, `"Classic"`, `"Biasa"`).
-- `UI:SetRounded(state)` — Mengaktifkan/menonaktifkan sudut membulat (`true`/`false`).
-- `UI:SetValue(flag, value)` / `UI:GetValue(flag)` — Mengatur atau membaca nilai flag.
-- `UI:OnValueChanged(flag, callback)` — Mendengarkan perubahan nilai pada suatu flag.
-- `UI:MinimizeToIcon()` / `UI:RestoreFromIcon()` / `UI:ToggleMenu()` — Mengatur kondisi minimize ke *Popup Icon Menu*.
-- `UI:Destroy()` — Menghapus UI dan memutuskan seluruh koneksi event dengan bersih.
+- `UI.Call(sideCount)` — Mengubah tata letak menjadi `2` atau `3` panel.
+- `UI:Category(label)` — Menambahkan label grup kategori pada sidebar kiri.
+- `UI:GetThemes()` — Mengembalikan tabel daftar ke-5 nama tema.
+- `UI:SetTheme(themeName)` — Mengganti tema dan seluruh gradasi font secara *real-time*.
+- `UI:SetText3D(state)` — Mengaktifkan/mematikan efek gradasi 2.5D/3D pada teks.
+- `UI:SetCheckboxStyle(style)` — Mengubah seluruh toggle antara `"Modern"` dan `"Checkbox"`.
+- `UI:SetScale(scale)` — Mengubah skala UI secara langsung (`0.5` – `1.5`).
+- `UI:SetTransparency(alpha)` — Mengubah transparansi permukaan panel (`0` – `0.65`).
+- `UI:SetRounded(state)` — Mengatur sudut membulat (`true` / `false`).
+- `UI:SetValue(flag, value)` / `UI:GetValue(flag)` — Mengatur atau membaca nilai flag serta memperbarui visual kontrol terkait.
+- `UI:OnValueChanged(flag, callback)` — Mendaftarkan listener perubahan nilai flag.
+- `UI:MinimizeToIcon()` / `UI:RestoreFromIcon()` / `UI:ToggleMenu()` — Mengatur status minimize ke *Popup Icon Menu*.
+- `UI:Destroy()` — Menghapus UI dan memutus seluruh koneksi input dengan bersih.
 
-### 3. Membuat Tab / Feature & Widget Canvas
+### 3. Komponen Canvas & Card (`center` / `right`)
 
 ```lua
-local feature = UI.feature
+UI:Category("Modules")
 
-feature("Home", "Home")({
+UI.feature("Combat", "Combat")({
     center = function(c)
-        -- Header Halaman
-        c:Header("Home", "Subtitle deskripsi halaman", "Badge")
+        -- Header Halaman (Font Bold Display 3D + Status Pill)
+        c:Header("Combat", "Deskripsi singkat halaman", "Active")
 
-        -- Canvas Ilustrasi Animasi 2.5D
-        c:IllustratedCanvas({
-            Tag = "2.5D ILLUSTRATED",
-            Title = "Judul Ilustrasi",
-            Subtitle = "Deskripsi singkat pada kartu ilustrasi",
-            Height = 108
-        })
-
-        -- Baris Statistik (StatRow)
+        -- Baris Kartu Statistik (Dengan Card Hover Micro-Interaction)
         c:StatRow({
-            { Icon = "Bolt",   Label = "Status",  Value = "Safe" },
-            { Icon = "Clock",  Label = "Runtime", Value = "00:12:34" },
-            { Icon = "Shield", Label = "Version", Value = "v6.2.0" }
+            { Icon = "Shield", Label = "Status", Value = "Safe" },
+            { Icon = "Bolt",   Label = "FPS",    Value = "Stable" }
         })
 
-        -- Card Container
-        local Card = c:Card("Judul Card", "Action Text", "Bolt")
-
-        -- Grid Tombol Aksi Cepat
-        Card:ActionGrid({
-            { Icon = "AutoFarm", Name = "Auto Farm", Flag = "QuickAutoFarm", Callback = function(state) end }
+        -- Card Container dengan Subtitle & Master Switch di Header Card
+        local Card = c:Card("Target Selection", nil, "Target", {
+            Subtitle = "Choose which targets assistance follows",
+            ToggleFlag = "MasterTarget",
+            Default = true,
+            Callback = function(on) print("Master:", on) end
         })
 
-        -- Toggle / Checkbox (Mendukung "Modern", "Classic", "Biasa")
-        Card:Toggle("Aktifkan Fitur", "FlagToggle", true, function(val)
-            print("Toggle:", val)
-        end, "Modern")
-
-        -- Slider Angka
-        Card:Slider("WalkSpeed", "FlagSpeed", 16, 200, 16, " studs", function(val)
-            print("Slider:", val)
+        -- Toggle Switch / Checkbox (Otomatis mengikuti CheckboxStyle atau override argumen ke-5)
+        Card:Toggle("Visible Targets", "VisTargets", true, function(val)
+            print("Visible Targets:", val)
         end)
 
-        -- Stepper (- / +)
-        Card:Stepper("Prioritas", "FlagPrio", 1, 1, function(val)
-            print("Stepper:", val)
+        -- Slider dengan Circular Thumb & Dukungan Step Desimal
+        Card:Slider("Smoothness", "SmoothVal", 0.1, 1.0, 0.5, "x", function(val)
+            print("Smoothness:", val)
+        end, 0.05)
+
+        -- Dropdown Expandable Interaktif
+        Card:Dropdown("Target Priority", "PrioMode", {"Automatic", "Nearest"}, "Automatic", function(opt)
+            print("Priority:", opt)
         end)
 
-        -- Dropdown Interaktif
-        Card:Dropdown("Pilih Tema", "FlagTheme", UI:GetThemes(), "Blue Night Sky", function(opt)
-            UI:SetTheme(opt)
+        -- Keybind Picker Interaktif (Tekan Esc/Backspace untuk mengosongkan ke None)
+        Card:Keybind("Activation Key", "AimKey", Enum.KeyCode.Q, function(keyCode)
+            print("Bound key:", keyCode)
         end)
 
-        -- TextBox Input
-        Card:Input("Target Player", "FlagTarget", "Username...", "", function(text)
-            print("Input:", text)
-        end)
+        -- Stepper (- / +), Input TextBox, dan Action Button
+        Card:Stepper("Target Limit", "LimCount", 1, 1)
+        Card:Input("Target Name", "TargetUser", "Username...", "")
+        Card:Button("Execute Action", "RUN", "Bolt", function() end)
 
-        -- Linimasa Aktivitas
-        Card:ActivityTimeline({
-            { Text = "Engine Initialized", Time = "Just now" }
+        -- Interactive Feature Hover Card (Gaya Automation Card dengan Hover & Active Highlight)
+        c:FeatureCard({
+            Icon = "Bot",
+            Title = "Autofarm",
+            Description = "Automatically farming without effort touching the screen.",
+            Flag = "AutoFarmCard",
+            Default = true,
+            Callback = function(active) print("Autofarm:", active) end
         })
     end,
 
     right = function(r)
-        r:Section("Pengaturan Cepat", "Settings")
-        r:Toggle("Lock Position", "LockPosition", false)
+        r:Section("Matrix Selector", "Grid")
+        -- Grid Pemilihan Tile Interaktif (5x5 dengan posisi Player di tengah)
+        r:TileGrid("Select tile to break (P = Player)", "TileMatrix", 5, 5, function(index, state)
+            print("Tile", index, state)
+        end)
     end
 })
 ```
 
 ---
 
-## Struktur File Repository
+## Struktur File
 
-- [`r&8_dv.lua`](r&8_dv.lua) — Core engine R&8_DV ImGui v6.2.
-- [`Sample Gui/SampleGui.lua`](Sample%20Gui/SampleGui.lua) — Contoh implementasi lengkap beserta demo 5 tema warna, 3 gaya checkbox, dan *Illustrated Canvas*.
-- [`Assets/icons.png`](Assets/icons.png) — Master logo/emblem resmi R&8_DV.
-- [`Assets/Jersey25-Regular.ttf`](Assets/Jersey25-Regular.ttf) — Font kustom bawaan framework.
+- [`r&8_dv.lua`](r&8_dv.lua) — Core engine **R&8_DV ImGui v5.0** (Minimalist Monochrome, 2.5D/3D Colourful Font, Card Hover, Single-Border Popup Icon).
+- [`Sample Gui/SampleGui.lua`](Sample%20Gui/SampleGui.lua) — Contoh implementasi lengkap (Home, Combat, Auto Farm + Tile Matrix, Visuals, Player, dan Pengaturan 5 Tema).
+- [`Assets/icons.png`](Assets/icons.png) — Master emblem resmi R&8_DV yang ditarik otomatis via GitHub RAW.
+- [`Assets/Jersey25-Regular.ttf`](Assets/Jersey25-Regular.ttf) — Aset font repositori.
