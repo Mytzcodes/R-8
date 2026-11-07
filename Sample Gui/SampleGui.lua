@@ -1,12 +1,14 @@
--- 1. Panggil Framework R&8_DV v5.0 (Ganti dengan link RAW Anda jika di-host di GitHub)
+-- 1. Panggil Framework R&8_DV v6.2 (Jangan ubah link karena di-load via GitHub RAW)
 local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r%268_dv.lua"))()
 
--- 2. Inisialisasi Standar (Scale, Font Jersey25, 2.5D Text, & Layout 3 Sisi langsung aktif!)
+-- 2. Inisialisasi Standar (Scale, Font Jersey25, 2.5D/3D Gradient Text, Illustrated Loader & Layout 3 Sisi)
 local UI = ImGui({
     Title = "DRY CURSED  -  IMGUI",
-    Theme = "Blue Night Sky",
-    CheckboxStyle = "Modern", -- Pilihan default: "Modern" | "Classic" | "Biasa"
-    LetterSpacing = 0
+    Theme = "Blue Night Sky",     -- Pilihan 5 Tema: "Blue Night Sky" | "Orange Sand" | "Midnight Monokai" | "Sakura Cyber Neon" | "Emerald Aurora"
+    CheckboxStyle = "Modern",     -- Pilihan default: "Modern" | "Classic" | "Biasa"
+    LetterSpacing = 0,
+    Text3D = true,                -- Aktifkan 2.5D / 3D Colourful Gradient Text yang ringan
+    AutoLoading = true            -- Aktifkan Illustrated Animated Loader yang nyaman
 }).Call(3)
 
 local feature = UI.feature
@@ -14,16 +16,24 @@ local function center(fn) return fn end
 local function right(fn) return fn end
 
 -- =========================================================================
--- FEATURE 1: HOME (Tengah + Panel Pengaturan Kanan)
+-- FEATURE 1: HOME (Tengah + Illustrated Canvas + Panel Pengaturan Kanan)
 -- =========================================================================
 feature("Home", "Home")({
     center = center(function(c)
-        c:Header("Home", "Welcome back, keep going!", "Game Ready")
+        c:Header("Home", "Welcome back, keep going!", "v6.2 Ready")
+
+        -- Canvas Ilustrasi Animasi 2.5D yang ringan & nyaman dilihat
+        c:IllustratedCanvas({
+            Tag = "2.5D ILLUSTRATED",
+            Title = "Colourful 3D Gradient Engine",
+            Subtitle = "5 Dynamic Themes • Smooth Orbital Canvas • Lightweight Shaders",
+            Height = 108
+        })
 
         c:StatRow({
             { Icon = "Bolt",   Label = "Status",  Value = "Safe" },
             { Icon = "Clock",  Label = "Runtime", Value = "00:12:34" },
-            { Icon = "Shield", Label = "Version", Value = "v5.0.0" }
+            { Icon = "Shield", Label = "Version", Value = "v6.2.0" }
         })
 
         local QuickCard = c:Card("Quick Actions", "View All", "Bolt")
@@ -38,21 +48,32 @@ feature("Home", "Home")({
 
         local ActivityCard = c:Card("Recent Activity", "View Logs", "Clock")
         ActivityCard:ActivityTimeline({
-            { Text = "Jersey25 Font & 2.5D Text Loaded", Time = "Just now" },
-            { Text = "Auto Farm Activated",              Time = "2m ago" },
-            { Text = "Teleported to Spawn",              Time = "5m ago" },
-            { Text = "ESP Enabled",                      Time = "8m ago" }
+            { Text = "Jersey25 Font & 3D Gradient Text Loaded", Time = "Just now" },
+            { Text = "5 Colourful Themes Initialized",          Time = "1m ago" },
+            { Text = "Auto Farm Activated",                     Time = "2m ago" },
+            { Text = "Teleported to Spawn",                     Time = "5m ago" }
         })
     end),
 
     right = right(function(r)
         r:Section("Settings", "Settings")
 
+        r:Section("Theme & 3D Colourful Palette")
+        r:Dropdown("Color Theme", "ThemeSelect", {
+            "Blue Night Sky",
+            "Orange Sand",
+            "Midnight Monokai",
+            "Sakura Cyber Neon",
+            "Emerald Aurora"
+        }, "Blue Night Sky", function(selectedTheme)
+            UI:SetTheme(selectedTheme)
+        end)
+
         r:Section("General")
         r:Slider("UI Scale", "UIScalePct", 65, 130, 100, "%", function(val)
-            UI.UIScale = val / 100
+            UI:SetScale(val / 100)
         end)
-        r:Slider("Transparency", "BgTransPct", 0, 60, 5, "%", function(val)
+        r:Slider("Transparency", "BgTransPct", 0, 60, 4, "%", function(val)
             UI:SetTransparency(val / 100)
         end)
         -- Mengubah bentuk seluruh Checkbox secara real-time ("Modern", "Classic", "Biasa")
@@ -72,15 +93,6 @@ feature("Home", "Home")({
         r:Toggle("FPS Boost", "FPSBoost", false)
         r:Toggle("Reduce Effects", "ReduceEffects", false)
 
-        r:Section("Theme & 2.5D Palette")
-        r:Dropdown("Color Style", "ThemeSelect", {
-            "Blue Night Sky",
-            "Orange Sand",
-            "Midnight Monokai"
-        }, "Blue Night Sky", function(selectedTheme)
-            UI:SetTheme(selectedTheme)
-        end)
-
         r:Section("Other")
         r:Toggle("Notifications", "NotifyToggle", true)
         r:Stepper("Target Priority", "PriorityLevel", 1, 1)
@@ -99,7 +111,13 @@ feature("AutoFarm", "Auto Farm")({
         StyleCard:Toggle("Classic Checkmark Box", "DemoClassic", true, nil, "Classic")
         StyleCard:Toggle("Desain Biasa (ON / OFF)", "DemoBiasa", false, nil, "Biasa")
 
-        local ConfigCard = c:Card("Farming Parameters", nil, "Sliders")
+        local ConfigCard = c:Card("Farming Parameters", "Presets", "Sliders")
+        ConfigCard:Dropdown("Farm Mode", "FarmModeSelect", {
+            "Nearest Mob",
+            "Boss Only",
+            "Quest Target",
+            "Resource Node"
+        }, "Nearest Mob")
         ConfigCard:Slider("Attack Distance", "FarmDist", 5, 50, 20, " studs")
         ConfigCard:Stepper("Loop Priority", "LoopPrio", 2, 1)
     end)
@@ -110,37 +128,55 @@ feature("AutoFarm", "Auto Farm")({
 -- =========================================================================
 feature("Teleports", "Teleports")({
     center = center(function(c)
-        c:Header("Teleports", "Instant coordinate & player warping")
+        c:Header("Teleports", "Instant coordinate & player warping", "Ready")
         local Card = c:Card("Destination", nil, "Teleports")
         Card:Input("Target Player", "TpTarget", "Username...", "")
+        Card:Dropdown("Zone Select", "TpZone", {
+            "Spawn Island",
+            "Crystal Cavern",
+            "Volcano Fortress",
+            "Sky Sanctuary"
+        }, "Spawn Island")
     end)
 })
 
 feature("Player", "Player")({
     center = center(function(c)
-        c:Header("Player", "Character movement overrides")
+        c:Header("Player", "Character movement overrides", "LocalPlayer")
         local Card = c:Card("Movement", nil, "Player")
         Card:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, "")
         Card:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, "")
+        Card:Toggle("Infinite Jump", "InfJumpToggle", false)
     end)
 })
 
 feature("Visuals", "Visuals")({
     center = center(function(c)
-        c:Header("Visuals", "ESP and camera field of view")
+        c:Header("Visuals", "ESP and camera field of view", "Render")
         local Card = c:Card("Visual Settings", nil, "Visuals")
         Card:Toggle("Player Box ESP", "BoxESP", false)
+        Card:Toggle("Tracer Lines", "TracerESP", false)
+        Card:Slider("Field of View", "CameraFOV", 70, 120, 70, " deg")
     end)
 })
 
 feature("Misc", "Misc")({
     center = center(function(c)
-        c:Header("Misc", "Additional utility tools")
+        c:Header("Misc", "Additional utility tools", "Utils")
+        local Card = c:Card("Server Utilities", nil, "Misc")
+        Card:Toggle("Anti-AFK", "AntiAFK", true)
+        Card:Toggle("Auto Rejoin on Kick", "AutoRejoin", false)
     end)
 })
 
 feature("Sliders", "Settings")({
     center = center(function(c)
-        c:Header("Settings", "Framework configuration")
+        c:Header("Settings", "Framework configuration & theme preview", "v6.2")
+        c:IllustratedCanvas({
+            Tag = "THEME ENGINE",
+            Title = "5 Custom Colourful Palettes",
+            Subtitle = "Blue Night Sky • Orange Sand • Midnight Monokai • Sakura Cyber Neon • Emerald Aurora",
+            Height = 104
+        })
     end)
 })
