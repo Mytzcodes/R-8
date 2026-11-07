@@ -1,7 +1,9 @@
 --[[
-    FRAMEWORK : R&8_DV ImGui Architecture (v4.0 - Pure Vector & Auto-Asset Edition)
+    FRAMEWORK : R&8_DV ImGui Architecture (v5.0 - 2.5D Font, 3-Checkbox & Fast-Motion Edition)
     COPYRIGHT : R&8_DV
-    ASSET     : Hardcoded GitHub Auto-Fetch + Procedural Lucide Vector Icons (Zero Emoji / Zero [] Bug)
+    ASSETS    :
+      - Icon : https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Assets/icons.png
+      - Font : https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Assets/Jersey25-Regular.ttf
 ]]
 
 local Players = game:GetService("Players")
@@ -14,9 +16,35 @@ local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 
--- // HARDCODED MASTER LOGO DARI GITHUB //
+-- // HARDCODED ASSETS DARI GITHUB //
 local MASTER_LOGO_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Assets/icons.png"
-local MASTER_CACHE_FILE = "R8DV_MasterLogo_v4.png"
+local MASTER_FONT_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Assets/Jersey25-Regular.ttf"
+
+local MASTER_LOGO_FILE = "R8DV_MasterLogo_v5.png"
+local MASTER_FONT_TTF  = "R8DV_Jersey25_v5.ttf"
+local MASTER_FONT_JSON = "R8DV_Jersey25_v5.json"
+
+-- // CACHED TWEENINFO (ANTI MOTION LAG & RESPONSIF CEPAT) //
+local TWEEN_FAST   = TweenInfo.new(0.11, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TWEEN_MEDIUM = TweenInfo.new(0.15, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TWEEN_POP    = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+-- // STANDAR TEMPLATE UKURAN FONT & SPACING //
+local LayoutPreset = {
+    WindowWidth   = 1000,
+    WindowHeight  = 580,
+    OuterMargin   = 10,
+    PanelPadding  = 12,
+    ItemSpacing   = 8,
+    CardPadding   = 12,
+    CardSpacing   = 7,
+    RowHeight     = 30,
+    FontHeader    = 26,
+    FontCardTitle = 16,
+    FontSection   = 15,
+    FontBody      = 15,
+    FontSmall     = 13
+}
 
 local function GetSafeGuiParent()
     local ok, res = pcall(function()
@@ -26,7 +54,7 @@ local function GetSafeGuiParent()
     return LocalPlayer:WaitForChild("PlayerGui")
 end
 
--- // AUTO-DOWNLOADER & ASSET RESOLVER //
+-- // AUTO-DOWNLOADER GAMBAR //
 local AssetCache = {}
 local function ResolveImage(source)
     if not source or source == "" then return "" end
@@ -39,16 +67,12 @@ local function ResolveImage(source)
     if getAsset and writefile and isfile then
         local ok, assetId = pcall(function()
             if string.find(source, "^https?://") then
-                local fileName = (source == MASTER_LOGO_URL) and MASTER_CACHE_FILE or ("R8DV_Cache_" .. tostring(#source * 17) .. ".png")
+                local fileName = (source == MASTER_LOGO_URL) and MASTER_LOGO_FILE or ("R8DV_Img_" .. tostring(#source * 19) .. ".png")
                 if not isfile(fileName) then
                     local raw = game:HttpGet(source, true)
-                    if raw and #raw > 0 then
-                        writefile(fileName, raw)
-                    end
+                    if raw and #raw > 0 then writefile(fileName, raw) end
                 end
-                if isfile(fileName) then
-                    return getAsset(fileName)
-                end
+                if isfile(fileName) then return getAsset(fileName) end
             elseif isfile(source) then
                 return getAsset(source)
             end
@@ -62,48 +86,105 @@ local function ResolveImage(source)
     return ""
 end
 
--- // CONTRAST GUARD (MENCEGAH TEKS GELAP DI ATAS BACKGROUND GELAP) //
+-- // AUTO-DOWNLOADER CUSTOM FONT (.TTF KE ROBLOX FONT FACE) //
+local LoadedCustomFont = nil
+local function GetFrameworkFont()
+    if LoadedCustomFont then return LoadedCustomFont end
+    local getAsset = getcustomasset or getsynasset
+    if getAsset and writefile and isfile then
+        local ok, fontFace = pcall(function()
+            if not isfile(MASTER_FONT_TTF) then
+                local rawTtf = game:HttpGet(MASTER_FONT_URL, true)
+                if rawTtf and #rawTtf > 0 then
+                    writefile(MASTER_FONT_TTF, rawTtf)
+                end
+            end
+            if isfile(MASTER_FONT_TTF) then
+                local ttfAssetId = getAsset(MASTER_FONT_TTF)
+                local descriptor = {
+                    name = "Jersey25_R8DV",
+                    faces = {{
+                        name = "Regular",
+                        weight = 400,
+                        style = "normal",
+                        assetId = ttfAssetId
+                    }}
+                }
+                writefile(MASTER_FONT_JSON, HttpService:JSONEncode(descriptor))
+                return Font.new(getAsset(MASTER_FONT_JSON), Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+            end
+            return nil
+        end)
+        if ok and fontFace then
+            LoadedCustomFont = fontFace
+            return LoadedCustomFont
+        end
+    end
+    LoadedCustomFont = Font.fromEnum(Enum.Font.GothamBold)
+    return LoadedCustomFont
+end
+
+-- // LETTER SPACING FORMATTER //
+local function ApplyLetterSpacing(text, spacingCount)
+    text = tostring(text or "")
+    spacingCount = spacingCount or 0
+    if spacingCount <= 0 or #text <= 1 then return text end
+    local spacer = string.rep(" ", spacingCount)
+    local chars = {}
+    for i = 1, #text do
+        table.insert(chars, string.sub(text, i, i))
+    end
+    return table.concat(chars, spacer)
+end
+
+-- // CONTRAST GUARD //
 local function GetReadableTextColor(bgColor, preferredTextColor)
     local function lum(c)
         return 0.299 * c.R + 0.587 * c.G + 0.114 * c.B
     end
-    if math.abs(lum(bgColor) - lum(preferredTextColor)) < 0.35 then
-        return lum(bgColor) > 0.5 and Color3.fromRGB(18, 20, 26) or Color3.fromRGB(242, 245, 252)
+    if math.abs(lum(bgColor) - lum(preferredTextColor)) < 0.32 then
+        return lum(bgColor) > 0.5 and Color3.fromRGB(16, 18, 24) or Color3.fromRGB(245, 248, 255)
     end
     return preferredTextColor
 end
 
--- // PALET TEMA WARNA //
+-- // PALET TEMA WARNA (DENGAN GRADASI TEKS 2.5D/3D) //
 local Themes = {
     ["Blue Night Sky"] = {
-        MainBg      = Color3.fromRGB(13, 15, 23),
-        PanelBg     = Color3.fromRGB(18, 21, 32),
-        CardBg      = Color3.fromRGB(24, 28, 42),
-        ControlBg   = Color3.fromRGB(32, 38, 56),
-        Accent      = Color3.fromRGB(98, 137, 255),
-        Stroke      = Color3.fromRGB(45, 53, 78),
-        TextPrimary = Color3.fromRGB(240, 244, 255),
-        TextMuted   = Color3.fromRGB(142, 152, 178)
+        MainBg        = Color3.fromRGB(12, 15, 24),
+        PanelBg       = Color3.fromRGB(17, 21, 33),
+        CardBg        = Color3.fromRGB(23, 28, 44),
+        ControlBg     = Color3.fromRGB(32, 39, 60),
+        Accent        = Color3.fromRGB(98, 142, 255),
+        AccentSecondary = Color3.fromRGB(156, 198, 255),
+        Stroke        = Color3.fromRGB(48, 58, 86),
+        TextPrimary   = Color3.fromRGB(242, 246, 255),
+        TextMuted     = Color3.fromRGB(148, 160, 190),
+        DepthShadow   = Color3.fromRGB(6, 8, 14)
     },
     ["Orange Sand"] = {
-        MainBg      = Color3.fromRGB(24, 19, 16),
-        PanelBg     = Color3.fromRGB(33, 26, 22),
-        CardBg      = Color3.fromRGB(43, 34, 29),
-        ControlBg   = Color3.fromRGB(58, 46, 39),
-        Accent      = Color3.fromRGB(245, 148, 66),
-        Stroke      = Color3.fromRGB(78, 61, 50),
-        TextPrimary = Color3.fromRGB(252, 243, 235),
-        TextMuted   = Color3.fromRGB(184, 162, 145)
+        MainBg        = Color3.fromRGB(24, 18, 15),
+        PanelBg       = Color3.fromRGB(33, 25, 21),
+        CardBg        = Color3.fromRGB(44, 34, 28),
+        ControlBg     = Color3.fromRGB(60, 46, 38),
+        Accent        = Color3.fromRGB(250, 148, 62),
+        AccentSecondary = Color3.fromRGB(255, 208, 132),
+        Stroke        = Color3.fromRGB(82, 64, 52),
+        TextPrimary   = Color3.fromRGB(255, 245, 236),
+        TextMuted     = Color3.fromRGB(190, 166, 148),
+        DepthShadow   = Color3.fromRGB(12, 8, 6)
     },
     ["Midnight Monokai"] = {
-        MainBg      = Color3.fromRGB(19, 20, 17),
-        PanelBg     = Color3.fromRGB(27, 28, 24),
-        CardBg      = Color3.fromRGB(36, 37, 32),
-        ControlBg   = Color3.fromRGB(48, 50, 43),
-        Accent      = Color3.fromRGB(166, 226, 46),
-        Stroke      = Color3.fromRGB(64, 66, 56),
-        TextPrimary = Color3.fromRGB(248, 248, 242),
-        TextMuted   = Color3.fromRGB(145, 148, 135)
+        MainBg        = Color3.fromRGB(18, 19, 16),
+        PanelBg       = Color3.fromRGB(26, 27, 23),
+        CardBg        = Color3.fromRGB(35, 37, 31),
+        ControlBg     = Color3.fromRGB(48, 50, 42),
+        Accent        = Color3.fromRGB(166, 226, 46),
+        AccentSecondary = Color3.fromRGB(102, 217, 239),
+        Stroke        = Color3.fromRGB(66, 68, 58),
+        TextPrimary   = Color3.fromRGB(248, 250, 242),
+        TextMuted     = Color3.fromRGB(152, 156, 142),
+        DepthShadow   = Color3.fromRGB(8, 9, 7)
     }
 }
 
@@ -117,15 +198,13 @@ local function ApplySurfaceStyle(frame, radiusScale, strokeColor, themeBindings,
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     stroke.Thickness = 1
     stroke.Color = strokeColor
-    stroke.Transparency = 0.25
+    stroke.Transparency = 0.22
     stroke.Parent = frame
     table.insert(themeBindings, {Instance = stroke, Prop = "Color", Key = strokeType or "Stroke"})
     return corner, stroke
 end
 
--- =========================================================================
--- PROCEDURAL LUCIDE VECTOR ICON ENGINE (ZERO EMOJI & ANTI-BUG KOTAK [])
--- =========================================================================
+-- // PROCEDURAL VECTOR ICON ENGINE (BEBAS EMOJI & ANTI KOTAK []) //
 local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
     local Holder = Instance.new("Frame")
     Holder.Name = "VectorIcon_" .. tostring(iconName)
@@ -169,7 +248,6 @@ local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
     end
 
     local key = string.lower(tostring(iconName or "dot"))
-
     if key == "home" then
         Line(sizePx * 0.55, 2, 0.32, 0.30, -40, 1)
         Line(sizePx * 0.55, 2, 0.68, 0.30, 40, 1)
@@ -178,7 +256,7 @@ local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
         Ring(sizePx * 0.46, sizePx * 0.46, 0.5, 0.5, 4, 1.8, 45)
         Line(sizePx * 0.22, sizePx * 0.22, 0.5, 0.5, 45, 2)
         Line(sizePx * 0.32, 2, 0.26, 0.74, -45, 1)
-    elseif key == "teleports" or key == "teleport" or key == "pin" then
+    elseif key == "teleports" or key == "teleport" then
         Ring(sizePx * 0.58, sizePx * 0.58, 0.5, 0.42, sizePx, 1.8)
         Line(4, 4, 0.5, 0.42, 0, 2)
         Line(sizePx * 0.30, 2, 0.42, 0.76, 55, 1)
@@ -186,15 +264,13 @@ local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
     elseif key == "player" or key == "user" then
         Ring(sizePx * 0.38, sizePx * 0.38, 0.5, 0.32, sizePx, 1.8)
         Ring(sizePx * 0.68, sizePx * 0.34, 0.5, 0.76, 6, 1.8)
-    elseif key == "visuals" or key == "esp" or key == "eye" then
+    elseif key == "visuals" or key == "esp" then
         Ring(sizePx * 0.82, sizePx * 0.46, 0.5, 0.5, sizePx, 1.8)
         Line(sizePx * 0.24, sizePx * 0.24, 0.5, 0.5, 0, sizePx)
-    elseif key == "misc" or key == "settings" or key == "gear" then
+    elseif key == "misc" or key == "settings" then
         Ring(sizePx * 0.56, sizePx * 0.56, 0.5, 0.5, sizePx, 2)
         Line(sizePx * 0.82, 2, 0.5, 0.5, 0, 1)
         Line(sizePx * 0.82, 2, 0.5, 0.5, 90, 1)
-        Line(sizePx * 0.82, 2, 0.5, 0.5, 45, 1)
-        Line(sizePx * 0.82, 2, 0.5, 0.5, -45, 1)
         Line(sizePx * 0.24, sizePx * 0.24, 0.5, 0.5, 0, sizePx)
     elseif key == "sliders" then
         Line(sizePx * 0.76, 2, 0.5, 0.28, 0, 1)
@@ -214,16 +290,19 @@ local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
     elseif key == "shield" then
         Ring(sizePx * 0.66, sizePx * 0.74, 0.5, 0.5, 5, 1.8)
         Line(2, sizePx * 0.38, 0.5, 0.5, 0, 1)
-    elseif key == "speed" or key == "gauge" then
+    elseif key == "speed" then
         Ring(sizePx * 0.78, sizePx * 0.78, 0.5, 0.54, sizePx, 1.8)
         Line(sizePx * 0.34, 2, 0.58, 0.46, -35, 1)
-    elseif key == "jump" or key == "arrowup" then
+    elseif key == "jump" then
         Line(2, sizePx * 0.64, 0.5, 0.54, 0, 1)
         Line(sizePx * 0.36, 2, 0.39, 0.32, -45, 1)
         Line(sizePx * 0.36, 2, 0.61, 0.32, 45, 1)
     elseif key == "collect" or key == "layers" then
         Ring(sizePx * 0.54, sizePx * 0.54, 0.5, 0.38, 3, 1.6, 45)
         Ring(sizePx * 0.54, sizePx * 0.54, 0.5, 0.60, 3, 1.6, 45)
+    elseif key == "check" then
+        Line(sizePx * 0.32, 2.2, 0.34, 0.58, 42, 1)
+        Line(sizePx * 0.56, 2.2, 0.62, 0.46, -48, 1)
     elseif key == "menu" then
         Line(14, 2, 0.5, 0.30, 0, 1)
         Line(14, 2, 0.5, 0.50, 0, 1)
@@ -245,7 +324,6 @@ local function DrawVectorIcon(parent, iconName, sizePx, themeKey, bindThemeFn)
     else
         Ring(sizePx * 0.45, sizePx * 0.45, 0.5, 0.5, 3, 1.8, 45)
     end
-
     return Holder
 end
 
@@ -257,11 +335,14 @@ local function ImGui(config)
         Copyright = "R&8_DV",
         ThemeName = config.Theme or "Blue Night Sky",
         Rounded = (config.Rounded ~= false),
-        SideCount = 3,
+        SideCount = config.Sides or 3,
         UIScale = config.Scale or 1,
-        BgTransparency = config.Transparency or 0.06,
+        LetterSpacing = config.LetterSpacing or 0,
+        CheckboxStyle = config.CheckboxStyle or "Modern", -- "Modern" | "Classic" | "Biasa"
+        Text3D = (config.Text3D ~= false),
+        BgTransparency = config.Transparency or 0.05,
         BannerImage = config.BannerImage or "",
-        BannerTransparency = config.BannerTransparency or 0.82,
+        BannerTransparency = config.BannerTransparency or 0.84,
         ToggleKey = config.ToggleKey or Enum.KeyCode.RightShift,
         FocusMode = (config.FocusMode ~= false),
         AutoLoading = (config.AutoLoading ~= false),
@@ -271,12 +352,13 @@ local function ImGui(config)
         Features = {},
         ActiveFeature = nil,
         ThemeBindings = {},
-        RadiusBindings = {}
+        GradientBindings = {},
+        RadiusBindings = {},
+        ToggleStyleUpdaters = {}
     }
 
     local CurrentTheme = Themes[Self.ThemeName] or Themes["Blue Night Sky"]
-
-    -- Otomatis tarik & cache logo utama dari GitHub di dalam framework
+    local CustomFontFace = GetFrameworkFont()
     local ResolvedMasterLogo = ResolveImage(MASTER_LOGO_URL)
 
     function Self:SetValue(flag, value)
@@ -311,9 +393,42 @@ local function ImGui(config)
         instance[prop] = col
     end
 
+    -- Helper Pembuat Teks 2.5D / 3D Bergradasi dengan Font Jersey25-Regular
+    local function CreateStylizedText(parent, text, sizePx, colorKey, is3DGradient, tracking)
+        local Lbl = Instance.new("TextLabel")
+        Lbl.BackgroundTransparency = 1
+        Lbl.FontFace = CustomFontFace
+        Lbl.Text = ApplyLetterSpacing(text, tracking or Self.LetterSpacing)
+        Lbl.TextSize = sizePx or LayoutPreset.FontBody
+        Lbl.Parent = parent
+        BindTheme(Lbl, "TextColor3", colorKey or "TextPrimary", "PanelBg")
+
+        -- Efek 2.5D / 3D Extruded Stroke & Gradient Minimalist
+        local depthStroke = Instance.new("UIStroke")
+        depthStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+        depthStroke.Thickness = is3DGradient and 1.4 or 0.9
+        depthStroke.Transparency = is3DGradient and 0.22 or 0.45
+        depthStroke.Parent = Lbl
+        BindTheme(depthStroke, "Color", "DepthShadow")
+
+        if is3DGradient then
+            local grad = Instance.new("UIGradient")
+            grad.Rotation = 90
+            grad.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, CurrentTheme.TextPrimary),
+                ColorSequenceKeypoint.new(0.55, CurrentTheme.AccentSecondary),
+                ColorSequenceKeypoint.new(1, CurrentTheme.Accent)
+            })
+            grad.Parent = Lbl
+            table.insert(Self.GradientBindings, {Instance = grad, Mode = "Text3D"})
+        end
+
+        return Lbl
+    end
+
     -- Root ScreenGui
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "R8_DV_Engine_" .. HttpService:GenerateGUID(false):sub(1, 6)
+    ScreenGui.Name = "R8_DV_v5_" .. HttpService:GenerateGUID(false):sub(1, 6)
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.ResetOnSpawn = false
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -324,7 +439,7 @@ local function ImGui(config)
     local FocusBlocker = Instance.new("TextButton")
     FocusBlocker.Name = "FocusSink"
     FocusBlocker.Size = UDim2.fromScale(1, 1)
-    FocusBlocker.BackgroundTransparency = 0.45
+    FocusBlocker.BackgroundTransparency = 0.48
     FocusBlocker.BackgroundColor3 = Color3.fromRGB(4, 6, 10)
     FocusBlocker.Text = ""
     FocusBlocker.AutoButtonColor = false
@@ -334,68 +449,84 @@ local function ImGui(config)
     FocusBlocker.Parent = ScreenGui
 
     -- =========================================================================
-    -- FLOATING SQUIRCLE MINIMIZE ICON (OTOMATIS DI FRAMEWORK)
+    -- FLOATING SHORTCUT BUTTON SAAT MINIMIZE (SOLID HARMONIOUS BACKGROUND)
     -- =========================================================================
     local MinimizeIconBtn = Instance.new("ImageButton")
-    MinimizeIconBtn.Name = "R8DV_FloatingSquircle"
+    MinimizeIconBtn.Name = "R8DV_FloatingShortcut"
     MinimizeIconBtn.Size = UDim2.fromOffset(64, 64)
-    MinimizeIconBtn.Position = UDim2.new(0, 48, 0.5, 0)
+    MinimizeIconBtn.Position = UDim2.new(0, 52, 0.5, 0)
     MinimizeIconBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-    MinimizeIconBtn.BackgroundColor3 = Color3.fromRGB(16, 20, 30)
+    MinimizeIconBtn.BackgroundTransparency = 0
     MinimizeIconBtn.AutoButtonColor = false
     MinimizeIconBtn.Image = ""
     MinimizeIconBtn.Visible = false
     MinimizeIconBtn.ZIndex = 800
     MinimizeIconBtn.Parent = ScreenGui
+    BindTheme(MinimizeIconBtn, "BackgroundColor3", "PanelBg")
 
     local MinOuterCorner = Instance.new("UICorner")
     MinOuterCorner.CornerRadius = UDim.new(0.28, 0)
     MinOuterCorner.Parent = MinimizeIconBtn
 
+    -- Gradasi Latar Luar Selaras Tema
     local MinBgGrad = Instance.new("UIGradient")
     MinBgGrad.Rotation = 45
     MinBgGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(34, 41, 60)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(16, 20, 30)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 12, 18))
+        ColorSequenceKeypoint.new(0, CurrentTheme.CardBg),
+        ColorSequenceKeypoint.new(0.65, CurrentTheme.PanelBg),
+        ColorSequenceKeypoint.new(1, CurrentTheme.MainBg)
     })
     MinBgGrad.Parent = MinimizeIconBtn
+    table.insert(Self.GradientBindings, {Instance = MinBgGrad, Mode = "ShortcutOuter"})
 
     local MinOuterStroke = Instance.new("UIStroke")
     MinOuterStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    MinOuterStroke.Thickness = 2
-    MinOuterStroke.Color = Color3.fromRGB(8, 10, 16)
+    MinOuterStroke.Thickness = 2.2
     MinOuterStroke.Parent = MinimizeIconBtn
+    BindTheme(MinOuterStroke, "Color", "DepthShadow")
 
+    -- Inner Filled Surface (Membuat Background Popup Solid & Berwarna Selaras)
     local MinInnerBezel = Instance.new("Frame")
     MinInnerBezel.Size = UDim2.new(1, -6, 1, -6)
     MinInnerBezel.Position = UDim2.fromScale(0.5, 0.5)
     MinInnerBezel.AnchorPoint = Vector2.new(0.5, 0.5)
-    MinInnerBezel.BackgroundTransparency = 1
+    MinInnerBezel.BackgroundTransparency = 0.08
     MinInnerBezel.ZIndex = 801
     MinInnerBezel.Parent = MinimizeIconBtn
+    BindTheme(MinInnerBezel, "BackgroundColor3", "CardBg")
 
     local MinInnerCorner = Instance.new("UICorner")
-    MinInnerCorner.CornerRadius = UDim.new(0.25, 0)
+    MinInnerCorner.CornerRadius = UDim.new(0.24, 0)
     MinInnerCorner.Parent = MinInnerBezel
+
+    local InnerSurfaceGrad = Instance.new("UIGradient")
+    InnerSurfaceGrad.Rotation = 135
+    InnerSurfaceGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, CurrentTheme.ControlBg),
+        ColorSequenceKeypoint.new(0.7, CurrentTheme.CardBg),
+        ColorSequenceKeypoint.new(1, CurrentTheme.Accent)
+    })
+    InnerSurfaceGrad.Parent = MinInnerBezel
+    table.insert(Self.GradientBindings, {Instance = InnerSurfaceGrad, Mode = "ShortcutInner"})
 
     local MinInnerStroke = Instance.new("UIStroke")
     MinInnerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     MinInnerStroke.Thickness = 1.6
-    MinInnerStroke.Color = Color3.fromRGB(205, 220, 248)
+    MinInnerStroke.Color = Color3.fromRGB(220, 232, 255)
     MinInnerStroke.Parent = MinInnerBezel
 
     local BezelGrad = Instance.new("UIGradient")
     BezelGrad.Rotation = 65
     BezelGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(225, 236, 255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(95, 112, 148)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(195, 212, 245))
+        ColorSequenceKeypoint.new(0, CurrentTheme.TextPrimary),
+        ColorSequenceKeypoint.new(0.5, CurrentTheme.Accent),
+        ColorSequenceKeypoint.new(1, CurrentTheme.AccentSecondary)
     })
     BezelGrad.Parent = MinInnerStroke
+    table.insert(Self.GradientBindings, {Instance = BezelGrad, Mode = "ShortcutRim"})
 
     local MinEmblemImg = Instance.new("ImageLabel")
-    MinEmblemImg.Size = UDim2.fromScale(0.84, 0.84)
+    MinEmblemImg.Size = UDim2.fromScale(0.82, 0.82)
     MinEmblemImg.Position = UDim2.fromScale(0.5, 0.5)
     MinEmblemImg.AnchorPoint = Vector2.new(0.5, 0.5)
     MinEmblemImg.BackgroundTransparency = 1
@@ -412,11 +543,11 @@ local function ImGui(config)
     end
 
     -- =========================================================================
-    -- MAIN WINDOW CONTAINER
+    -- MAIN WINDOW CONTAINER (UKURAN & SPACING SEIMBANG)
     -- =========================================================================
     local MainWindow = Instance.new("Frame")
     MainWindow.Name = "MainWindow"
-    MainWindow.Size = UDim2.fromOffset(1020, 600)
+    MainWindow.Size = UDim2.fromOffset(LayoutPreset.WindowWidth, LayoutPreset.WindowHeight)
     MainWindow.Position = UDim2.fromScale(0.5, 0.5)
     MainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
     MainWindow.BackgroundTransparency = Self.BgTransparency
@@ -432,8 +563,8 @@ local function ImGui(config)
         local cam = workspace.CurrentCamera
         if not cam then return 1 end
         local vp = cam.ViewportSize
-        local autoFit = math.min(1, (vp.X * 0.94) / 1020, (vp.Y * 0.92) / 600)
-        return math.clamp(autoFit * Self.UIScale, 0.42, 1.5)
+        local autoFit = math.min(1, (vp.X * 0.94) / LayoutPreset.WindowWidth, (vp.Y * 0.92) / LayoutPreset.WindowHeight)
+        return math.clamp(autoFit * Self.UIScale, 0.45, 1.45)
     end
 
     local function UpdateResponsiveScale()
@@ -458,36 +589,31 @@ local function ImGui(config)
     BannerLayer.Parent = MainWindow
     ApplySurfaceStyle(BannerLayer, 14, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-    -- Watermark Copyright R&8_DV (Murni ASCII, Tanpa Risiko [])
-    local Watermark = Instance.new("TextLabel")
+    -- Watermark Copyright R&8_DV
+    local Watermark = CreateStylizedText(MainWindow, "(C) " .. Self.Copyright .. " ENGINE", 12, "TextMuted", false, 0)
     Watermark.Size = UDim2.new(0, 160, 0, 16)
-    Watermark.Position = UDim2.new(1, -168, 1, -18)
-    Watermark.BackgroundTransparency = 1
-    Watermark.Font = Enum.Font.GothamBold
-    Watermark.Text = "(C) " .. Self.Copyright .. " ENGINE"
-    Watermark.TextSize = 10
+    Watermark.Position = UDim2.new(1, -168, 1, -17)
     Watermark.TextXAlignment = Enum.TextXAlignment.Right
-    Watermark.TextTransparency = 0.45
-    Watermark.Parent = MainWindow
-    BindTheme(Watermark, "TextColor3", "TextMuted", "MainBg")
+    Watermark.TextTransparency = 0.4
 
     -- 1. LEFT SIDEBAR (25%)
+    local m = LayoutPreset.OuterMargin
     local LeftSidebar = Instance.new("Frame")
     LeftSidebar.Name = "LeftSidebar"
-    LeftSidebar.Position = UDim2.new(0, 12, 0, 12)
-    LeftSidebar.Size = UDim2.new(0.25, -18, 1, -24)
+    LeftSidebar.Position = UDim2.new(0, m, 0, m)
+    LeftSidebar.Size = UDim2.new(0.24, -m, 1, -(m * 2))
     LeftSidebar.BackgroundTransparency = Self.BgTransparency
     LeftSidebar.Parent = MainWindow
     BindTheme(LeftSidebar, "BackgroundColor3", "PanelBg")
     ApplySurfaceStyle(LeftSidebar, 12, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
     local LogoHolder = Instance.new("Frame")
-    LogoHolder.Size = UDim2.new(1, 0, 0, 130)
+    LogoHolder.Size = UDim2.new(1, 0, 0, 118)
     LogoHolder.BackgroundTransparency = 1
     LogoHolder.Parent = LeftSidebar
 
     local BrandLogo = Instance.new("ImageLabel")
-    BrandLogo.Size = UDim2.fromOffset(86, 86)
+    BrandLogo.Size = UDim2.fromOffset(82, 82)
     BrandLogo.Position = UDim2.fromScale(0.5, 0.52)
     BrandLogo.AnchorPoint = Vector2.new(0.5, 0.5)
     BrandLogo.BackgroundTransparency = 1
@@ -496,14 +622,14 @@ local function ImGui(config)
     BrandLogo.Parent = LogoHolder
 
     if ResolvedMasterLogo == "" then
-        local fallbackCrest = DrawVectorIcon(LogoHolder, "AutoFarm", 48, "Accent", BindTheme)
+        local fallbackCrest = DrawVectorIcon(LogoHolder, "AutoFarm", 44, "Accent", BindTheme)
         fallbackCrest.Position = UDim2.fromScale(0.5, 0.52)
         fallbackCrest.AnchorPoint = Vector2.new(0.5, 0.5)
     end
 
     local NavScroll = Instance.new("ScrollingFrame")
-    NavScroll.Position = UDim2.new(0, 10, 0, 135)
-    NavScroll.Size = UDim2.new(1, -20, 1, -147)
+    NavScroll.Position = UDim2.new(0, 10, 0, 122)
+    NavScroll.Size = UDim2.new(1, -20, 1, -132)
     NavScroll.BackgroundTransparency = 1
     NavScroll.ScrollBarThickness = 2
     NavScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -512,47 +638,36 @@ local function ImGui(config)
     BindTheme(NavScroll, "ScrollBarImageColor3", "Accent")
 
     local NavLayout = Instance.new("UIListLayout")
-    NavLayout.Padding = UDim.new(0, 6)
+    NavLayout.Padding = UDim.new(0, 5)
     NavLayout.SortOrder = Enum.SortOrder.LayoutOrder
     NavLayout.Parent = NavScroll
 
     -- 2. TOP IMGUI HEADER BAR
     local TopBar = Instance.new("Frame")
     TopBar.Name = "TopBar"
-    TopBar.Position = UDim2.new(0.25, 2, 0, 12)
-    TopBar.Size = UDim2.new(0.75, -14, 0, 42)
+    TopBar.Position = UDim2.new(0.24, 8, 0, m)
+    TopBar.Size = UDim2.new(0.76, -(m + 8), 0, 40)
     TopBar.BackgroundTransparency = Self.BgTransparency
     TopBar.Parent = MainWindow
     BindTheme(TopBar, "BackgroundColor3", "PanelBg")
     ApplySurfaceStyle(TopBar, 10, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
     local TopLogoIcon = Instance.new("ImageLabel")
-    TopLogoIcon.Position = UDim2.new(0, 14, 0.5, -10)
+    TopLogoIcon.Position = UDim2.new(0, 12, 0.5, -10)
     TopLogoIcon.Size = UDim2.fromOffset(20, 20)
     TopLogoIcon.BackgroundTransparency = 1
     TopLogoIcon.ScaleType = Enum.ScaleType.Fit
     TopLogoIcon.Image = ResolvedMasterLogo
     TopLogoIcon.Parent = TopBar
 
-    if ResolvedMasterLogo == "" then
-        local vecTop = DrawVectorIcon(TopBar, "Layers", 18, "Accent", BindTheme)
-        vecTop.Position = UDim2.new(0, 14, 0.5, -9)
-    end
-
-    local TopTitle = Instance.new("TextLabel")
-    TopTitle.Position = UDim2.new(0, 42, 0, 0)
-    TopTitle.Size = UDim2.new(0.6, 0, 1, 0)
-    TopTitle.BackgroundTransparency = 1
-    TopTitle.Font = Enum.Font.GothamBold
-    TopTitle.Text = Self.Title .. "   |   " .. Self.Copyright
-    TopTitle.TextSize = 12
+    local TopTitle = CreateStylizedText(TopBar, Self.Title .. "   |   " .. Self.Copyright, LayoutPreset.FontBody, "TextPrimary", true, 1)
+    TopTitle.Position = UDim2.new(0, 40, 0, 0)
+    TopTitle.Size = UDim2.new(0.65, 0, 1, 0)
     TopTitle.TextXAlignment = Enum.TextXAlignment.Left
-    TopTitle.Parent = TopBar
-    BindTheme(TopTitle, "TextColor3", "TextPrimary", "PanelBg")
 
     local ControlsHolder = Instance.new("Frame")
-    ControlsHolder.Position = UDim2.new(1, -138, 0, 0)
-    ControlsHolder.Size = UDim2.new(0, 130, 1, 0)
+    ControlsHolder.Position = UDim2.new(1, -132, 0, 0)
+    ControlsHolder.Size = UDim2.new(0, 124, 1, 0)
     ControlsHolder.BackgroundTransparency = 1
     ControlsHolder.Parent = TopBar
 
@@ -560,10 +675,9 @@ local function ImGui(config)
     ControlsLayout.FillDirection = Enum.FillDirection.Horizontal
     ControlsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
     ControlsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-    ControlsLayout.Padding = UDim.new(0, 6)
+    ControlsLayout.Padding = UDim.new(0, 5)
     ControlsLayout.Parent = ControlsHolder
 
-    -- Tombol Window Menggunakan Ikon Vektor Murni (Bebas Risiko Kotak [])
     local function CreateVectorWindowBtn(vectorType, onClick)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.fromOffset(26, 26)
@@ -571,36 +685,35 @@ local function ImGui(config)
         btn.Text = ""
         btn.AutoButtonColor = false
         btn.Parent = ControlsHolder
-        local icon = DrawVectorIcon(btn, vectorType, 16, "TextMuted", BindTheme)
+        local icon = DrawVectorIcon(btn, vectorType, 15, "TextMuted", BindTheme)
         icon.Position = UDim2.fromScale(0.5, 0.5)
         icon.AnchorPoint = Vector2.new(0.5, 0.5)
         btn.MouseButton1Click:Connect(onClick)
         return btn
     end
 
-    -- 3. CENTER PANEL (50% di mode 3-sisi, 75% di mode 2-sisi)
+    -- 3. CENTER PANEL (50%) & RIGHT PANEL (26%) DENGAN SPACING SEIMBANG
     local CenterPanel = Instance.new("Frame")
     CenterPanel.Name = "CenterPanel"
-    CenterPanel.Position = UDim2.new(0.25, 2, 0, 64)
-    CenterPanel.Size = UDim2.new(0.50, -8, 1, -76)
+    CenterPanel.Position = UDim2.new(0.24, 8, 0, m + 48)
+    CenterPanel.Size = UDim2.new(0.50, -8, 1, -(m * 2 + 48))
     CenterPanel.BackgroundTransparency = Self.BgTransparency
     CenterPanel.ClipsDescendants = true
     CenterPanel.Parent = MainWindow
     BindTheme(CenterPanel, "BackgroundColor3", "PanelBg")
     ApplySurfaceStyle(CenterPanel, 12, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-    -- 4. RIGHT PANEL (25% di mode 3-sisi)
     local RightPanel = Instance.new("Frame")
     RightPanel.Name = "RightPanel"
-    RightPanel.Position = UDim2.new(0.75, 2, 0, 64)
-    RightPanel.Size = UDim2.new(0.25, -14, 1, -76)
+    RightPanel.Position = UDim2.new(0.74, 8, 0, m + 48)
+    RightPanel.Size = UDim2.new(0.26, -(m + 8), 1, -(m * 2 + 48))
     RightPanel.BackgroundTransparency = Self.BgTransparency
     RightPanel.ClipsDescendants = true
     RightPanel.Parent = MainWindow
     BindTheme(RightPanel, "BackgroundColor3", "PanelBg")
     ApplySurfaceStyle(RightPanel, 12, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-    -- Dragging Jendela Utama
+    -- Dragging Jendela Utama (Responsif Instan)
     local dragging, dragInput, dragStart, startPos
     TopBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -626,7 +739,7 @@ local function ImGui(config)
     end)
 
     -- =========================================================================
-    -- LOGIKA OTOMATIS MINIMIZE (-) & CLOSE (X) KE FLOATING ICON
+    -- LOGIKA CEPAT MINIMIZE (-) & CLOSE (X) KE FLOATING SHORTCUT ICON
     -- =========================================================================
     function Self:MinimizeToIcon()
         if Self.IsMinimized then return end
@@ -636,18 +749,14 @@ local function ImGui(config)
             StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
         end)
 
-        local shrink = TweenService:Create(WindowScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-            Scale = 0
-        })
+        local shrink = TweenService:Create(WindowScale, TWEEN_FAST, {Scale = 0})
         shrink:Play()
         shrink.Completed:Connect(function()
             if Self.IsMinimized then
                 MainWindow.Visible = false
-                MinimizeIconBtn.Size = UDim2.fromOffset(0, 0)
+                MinimizeIconBtn.Size = UDim2.fromOffset(12, 12)
                 MinimizeIconBtn.Visible = true
-                TweenService:Create(MinimizeIconBtn, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                    Size = UDim2.fromOffset(64, 64)
-                }):Play()
+                TweenService:Create(MinimizeIconBtn, TWEEN_POP, {Size = UDim2.fromOffset(64, 64)}):Play()
             end
         end)
     end
@@ -656,9 +765,7 @@ local function ImGui(config)
         if not Self.IsMinimized then return end
         Self.IsMinimized = false
 
-        local hideIcon = TweenService:Create(MinimizeIconBtn, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Size = UDim2.fromOffset(0, 0)
-        })
+        local hideIcon = TweenService:Create(MinimizeIconBtn, TWEEN_FAST, {Size = UDim2.fromOffset(0, 0)})
         hideIcon:Play()
         hideIcon.Completed:Connect(function()
             if not Self.IsMinimized then
@@ -668,9 +775,7 @@ local function ImGui(config)
                 pcall(function()
                     StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
                 end)
-                TweenService:Create(WindowScale, TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                    Scale = ComputeTargetScale()
-                }):Play()
+                TweenService:Create(WindowScale, TWEEN_POP, {Scale = ComputeTargetScale()}):Play()
             end
         end)
     end
@@ -684,7 +789,7 @@ local function ImGui(config)
         end
     end
 
-    -- Smart Drag vs Click pada Floating Squircle Icon
+    -- Drag & Click pada Floating Shortcut Button
     local iconDragging, iconDragInput, iconDragStart, iconStartPos
     local movedDist = 0
 
@@ -694,12 +799,12 @@ local function ImGui(config)
             movedDist = 0
             iconDragStart = input.Position
             iconStartPos = MinimizeIconBtn.Position
-            TweenService:Create(MinimizeIconBtn, TweenInfo.new(0.12), {Size = UDim2.fromOffset(58, 58)}):Play()
+            TweenService:Create(MinimizeIconBtn, TWEEN_FAST, {Size = UDim2.fromOffset(58, 58)}):Play()
 
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     iconDragging = false
-                    TweenService:Create(MinimizeIconBtn, TweenInfo.new(0.15), {Size = UDim2.fromOffset(64, 64)}):Play()
+                    TweenService:Create(MinimizeIconBtn, TWEEN_FAST, {Size = UDim2.fromOffset(64, 64)}):Play()
                     if movedDist < 6 then
                         Self:RestoreFromIcon()
                     end
@@ -728,19 +833,18 @@ local function ImGui(config)
         Self.SideCount = (sideCount == 2) and 2 or 3
         if Self.SideCount == 3 then
             RightPanel.Visible = true
-            TweenService:Create(CenterPanel, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
-                Size = UDim2.new(0.50, -8, 1, -76)
+            TweenService:Create(CenterPanel, TWEEN_MEDIUM, {
+                Size = UDim2.new(0.50, -8, 1, -(m * 2 + 48))
             }):Play()
         else
             RightPanel.Visible = false
-            TweenService:Create(CenterPanel, TweenInfo.new(0.22, Enum.EasingStyle.Quart), {
-                Size = UDim2.new(0.75, -14, 1, -76)
+            TweenService:Create(CenterPanel, TWEEN_MEDIUM, {
+                Size = UDim2.new(0.76, -(m + 8), 1, -(m * 2 + 48))
             }):Play()
         end
         return Self
     end
 
-    -- Pasang 4 Tombol Window Vektor di TopBar
     CreateVectorWindowBtn("Menu", function()
         Self.Call(Self.SideCount == 3 and 2 or 3)
     end)
@@ -750,15 +854,15 @@ local function ImGui(config)
     local isMaximized = false
     CreateVectorWindowBtn("Maximize", function()
         isMaximized = not isMaximized
-        TweenService:Create(MainWindow, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
-            Size = isMaximized and UDim2.fromOffset(1180, 680) or UDim2.fromOffset(1020, 600)
+        TweenService:Create(MainWindow, TWEEN_MEDIUM, {
+            Size = isMaximized and UDim2.fromOffset(1140, 650) or UDim2.fromOffset(LayoutPreset.WindowWidth, LayoutPreset.WindowHeight)
         }):Play()
     end)
     CreateVectorWindowBtn("Close", function()
         Self:MinimizeToIcon()
     end)
 
-    -- Live Updaters
+    -- Live Updaters (Tema, Gradient 2.5D, Checkbox Style, Radius, Transparansi)
     function Self:SetTheme(themeName)
         if not Themes[themeName] then return end
         Self.ThemeName = themeName
@@ -771,6 +875,45 @@ local function ImGui(config)
                 end
                 b.Instance[b.Prop] = col
             end
+        end
+        for _, g in ipairs(Self.GradientBindings) do
+            if g.Instance and g.Instance.Parent then
+                if g.Mode == "Text3D" then
+                    g.Instance.Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, CurrentTheme.TextPrimary),
+                        ColorSequenceKeypoint.new(0.55, CurrentTheme.AccentSecondary),
+                        ColorSequenceKeypoint.new(1, CurrentTheme.Accent)
+                    })
+                elseif g.Mode == "ShortcutOuter" then
+                    g.Instance.Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, CurrentTheme.CardBg),
+                        ColorSequenceKeypoint.new(0.65, CurrentTheme.PanelBg),
+                        ColorSequenceKeypoint.new(1, CurrentTheme.MainBg)
+                    })
+                elseif g.Mode == "ShortcutInner" then
+                    g.Instance.Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, CurrentTheme.ControlBg),
+                        ColorSequenceKeypoint.new(0.7, CurrentTheme.CardBg),
+                        ColorSequenceKeypoint.new(1, CurrentTheme.Accent)
+                    })
+                elseif g.Mode == "ShortcutRim" then
+                    g.Instance.Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0, CurrentTheme.TextPrimary),
+                        ColorSequenceKeypoint.new(0.5, CurrentTheme.Accent),
+                        ColorSequenceKeypoint.new(1, CurrentTheme.AccentSecondary)
+                    })
+                end
+            end
+        end
+        for _, fn in ipairs(Self.ToggleStyleUpdaters) do
+            pcall(fn)
+        end
+    end
+
+    function Self:SetCheckboxStyle(styleName)
+        Self.CheckboxStyle = styleName or "Modern"
+        for _, fn in ipairs(Self.ToggleStyleUpdaters) do
+            pcall(fn, Self.CheckboxStyle)
         end
     end
 
@@ -807,10 +950,10 @@ local function ImGui(config)
     end)
 
     -- =========================================================================
-    -- AUTO-LOADING SCREEN & ASSET PRELOADER (TERTANAM DI FRAMEWORK)
+    -- AUTO-LOADING SCREEN CEPAT & RINGAN
     -- =========================================================================
     function Self:RunInternalLoader(duration)
-        duration = duration or 1.4
+        duration = duration or 1.0
         local Loader = Instance.new("Frame")
         Loader.Name = "FrameworkLoader"
         Loader.Size = UDim2.fromScale(1, 1)
@@ -820,39 +963,27 @@ local function ImGui(config)
         ApplySurfaceStyle(Loader, 14, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
         local LoaderIcon = Instance.new("ImageLabel")
-        LoaderIcon.Size = UDim2.fromOffset(78, 78)
-        LoaderIcon.Position = UDim2.new(0.5, -39, 0.25, 0)
+        LoaderIcon.Size = UDim2.fromOffset(76, 76)
+        LoaderIcon.Position = UDim2.new(0.5, -38, 0.25, 0)
         LoaderIcon.BackgroundTransparency = 1
         LoaderIcon.ScaleType = Enum.ScaleType.Fit
         LoaderIcon.Image = ResolvedMasterLogo
         LoaderIcon.ZIndex = 501
         LoaderIcon.Parent = Loader
 
-        local LoadTitle = Instance.new("TextLabel")
-        LoadTitle.Size = UDim2.new(1, 0, 0, 32)
+        local LoadTitle = CreateStylizedText(Loader, Self.Title, 28, "TextPrimary", true, 1)
+        LoadTitle.Size = UDim2.new(1, 0, 0, 34)
         LoadTitle.Position = UDim2.new(0, 0, 0.43, 0)
-        LoadTitle.BackgroundTransparency = 1
-        LoadTitle.Font = Enum.Font.GothamBlack
-        LoadTitle.Text = Self.Title
-        LoadTitle.TextSize = 22
         LoadTitle.ZIndex = 501
-        LoadTitle.Parent = Loader
-        BindTheme(LoadTitle, "TextColor3", "TextPrimary", "MainBg")
 
-        local LoadSub = Instance.new("TextLabel")
+        local LoadSub = CreateStylizedText(Loader, "Loading Jersey25 Font & 2.5D Vector Engine...", LayoutPreset.FontSmall, "TextMuted", false, 0)
         LoadSub.Size = UDim2.new(1, 0, 0, 20)
-        LoadSub.Position = UDim2.new(0, 0, 0.49, 0)
-        LoadSub.BackgroundTransparency = 1
-        LoadSub.Font = Enum.Font.GothamMedium
-        LoadSub.Text = "Preloading R&8_DV Vector Icons & GitHub Assets..."
-        LoadSub.TextSize = 12
+        LoadSub.Position = UDim2.new(0, 0, 0.50, 0)
         LoadSub.ZIndex = 501
-        LoadSub.Parent = Loader
-        BindTheme(LoadSub, "TextColor3", "TextMuted", "MainBg")
 
         local BarBg = Instance.new("Frame")
-        BarBg.Size = UDim2.fromOffset(280, 6)
-        BarBg.Position = UDim2.new(0.5, -140, 0.57, 0)
+        BarBg.Size = UDim2.fromOffset(260, 6)
+        BarBg.Position = UDim2.new(0.5, -130, 0.58, 0)
         BarBg.ZIndex = 501
         BarBg.Parent = Loader
         BindTheme(BarBg, "BackgroundColor3", "ControlBg")
@@ -871,101 +1002,83 @@ local function ImGui(config)
             end)
         end)
 
-        TweenService:Create(BarFill, TweenInfo.new(duration * 0.85, Enum.EasingStyle.Quart), {
+        TweenService:Create(BarFill, TweenInfo.new(duration * 0.82, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = UDim2.fromScale(1, 1)
         }):Play()
 
         task.delay(duration, function()
             if Loader and Loader.Parent then
-                TweenService:Create(Loader, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
-                task.wait(0.28)
+                TweenService:Create(Loader, TWEEN_MEDIUM, {BackgroundTransparency = 1}):Play()
+                task.wait(0.16)
                 Loader:Destroy()
             end
         end)
     end
 
     if Self.AutoLoading then
-        Self:RunInternalLoader(1.4)
+        Self:RunInternalLoader(1.0)
     end
 
     -- =========================================================================
-    -- WIDGET FACTORY (`center()` & `right()`) - MURNI VEKTOR TANPA EMOJI
+    -- WIDGET FACTORY (`center()` & `right()`) DENGAN 3 JENIS CHECKBOX & 2.5D TEXT
     -- =========================================================================
     local function CreateCanvasBuilder(scrollingPage)
         local Builder = {}
 
         function Builder:Header(title, subtitle, badgeText)
             local HeaderFrame = Instance.new("Frame")
-            HeaderFrame.Size = UDim2.new(1, 0, 0, 58)
+            HeaderFrame.Size = UDim2.new(1, 0, 0, 52)
             HeaderFrame.BackgroundTransparency = 1
             HeaderFrame.Parent = scrollingPage
 
             local AccentBar = Instance.new("Frame")
-            AccentBar.Size = UDim2.new(0, 4, 0, 46)
-            AccentBar.Position = UDim2.new(0, 0, 0, 6)
+            AccentBar.Size = UDim2.new(0, 4, 0, 42)
+            AccentBar.Position = UDim2.new(0, 0, 0, 5)
             AccentBar.Parent = HeaderFrame
             BindTheme(AccentBar, "BackgroundColor3", "Accent")
             ApplySurfaceStyle(AccentBar, 3, CurrentTheme.Accent, Self.ThemeBindings, Self.RadiusBindings, "Accent")
 
-            local TitleLbl = Instance.new("TextLabel")
-            TitleLbl.Position = UDim2.new(0, 14, 0, 4)
+            local TitleLbl = CreateStylizedText(HeaderFrame, title, LayoutPreset.FontHeader, "TextPrimary", true, 1)
+            TitleLbl.Position = UDim2.new(0, 12, 0, 2)
             TitleLbl.Size = UDim2.new(0.65, 0, 0, 28)
-            TitleLbl.BackgroundTransparency = 1
-            TitleLbl.Font = Enum.Font.GothamBold
-            TitleLbl.Text = title
-            TitleLbl.TextSize = 23
             TitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-            TitleLbl.Parent = HeaderFrame
-            BindTheme(TitleLbl, "TextColor3", "TextPrimary", "PanelBg")
 
-            local SubLbl = Instance.new("TextLabel")
-            SubLbl.Position = UDim2.new(0, 14, 0, 33)
+            local SubLbl = CreateStylizedText(HeaderFrame, subtitle or "", LayoutPreset.FontSmall, "TextMuted", false, 0)
+            SubLbl.Position = UDim2.new(0, 12, 0, 30)
             SubLbl.Size = UDim2.new(0.65, 0, 0, 18)
-            SubLbl.BackgroundTransparency = 1
-            SubLbl.Font = Enum.Font.Gotham
-            SubLbl.Text = subtitle or ""
-            SubLbl.TextSize = 12
             SubLbl.TextXAlignment = Enum.TextXAlignment.Left
-            SubLbl.Parent = HeaderFrame
-            BindTheme(SubLbl, "TextColor3", "TextMuted", "PanelBg")
 
             if badgeText then
                 local Pill = Instance.new("Frame")
-                Pill.Size = UDim2.fromOffset(124, 30)
-                Pill.Position = UDim2.new(1, -126, 0, 12)
+                Pill.Size = UDim2.fromOffset(118, 28)
+                Pill.Position = UDim2.new(1, -120, 0, 10)
                 Pill.Parent = HeaderFrame
                 BindTheme(Pill, "BackgroundColor3", "CardBg")
-                ApplySurfaceStyle(Pill, 15, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
+                ApplySurfaceStyle(Pill, 14, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
                 local Dot = Instance.new("Frame")
                 Dot.Size = UDim2.fromOffset(8, 8)
-                Dot.Position = UDim2.new(0, 12, 0.5, -4)
+                Dot.Position = UDim2.new(0, 11, 0.5, -4)
                 Dot.Parent = Pill
                 BindTheme(Dot, "BackgroundColor3", "Accent")
                 ApplySurfaceStyle(Dot, 4, CurrentTheme.Accent, Self.ThemeBindings, Self.RadiusBindings, "Accent")
 
-                local PillTxt = Instance.new("TextLabel")
-                PillTxt.Position = UDim2.new(0, 26, 0, 0)
-                PillTxt.Size = UDim2.new(1, -32, 1, 0)
-                PillTxt.BackgroundTransparency = 1
-                PillTxt.Font = Enum.Font.GothamMedium
-                PillTxt.Text = badgeText
-                PillTxt.TextSize = 11
+                local PillTxt = CreateStylizedText(Pill, badgeText, LayoutPreset.FontSmall, "TextPrimary", true, 0)
+                PillTxt.Position = UDim2.new(0, 24, 0, 0)
+                PillTxt.Size = UDim2.new(1, -28, 1, 0)
                 PillTxt.TextXAlignment = Enum.TextXAlignment.Left
-                PillTxt.Parent = Pill
-                BindTheme(PillTxt, "TextColor3", "TextPrimary", "CardBg")
             end
         end
 
         function Builder:StatRow(statsList)
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 74)
+            Row.Size = UDim2.new(1, 0, 0, 66)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
             local Grid = Instance.new("UIGridLayout")
-            Grid.CellSize = UDim2.new(1 / #statsList, -8, 1, 0)
-            Grid.CellPadding = UDim2.new(0, 10, 0, 0)
+            Grid.CellSize = UDim2.new(1 / #statsList, -7, 1, 0)
+            Grid.CellPadding = UDim2.new(0, 8, 0, 0)
             Grid.Parent = Row
 
             local ValueLabels = {}
@@ -975,30 +1088,18 @@ local function ImGui(config)
                 BindTheme(Card, "BackgroundColor3", "CardBg")
                 ApplySurfaceStyle(Card, 10, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-                local vecIcon = DrawVectorIcon(Card, item.Icon or "Bolt", 24, "Accent", BindTheme)
-                vecIcon.Position = UDim2.new(0, 16, 0.5, -12)
+                local vecIcon = DrawVectorIcon(Card, item.Icon or "Bolt", 22, "Accent", BindTheme)
+                vecIcon.Position = UDim2.new(0, 12, 0.5, -11)
 
-                local Lbl = Instance.new("TextLabel")
-                Lbl.Position = UDim2.new(0, 52, 0, 16)
-                Lbl.Size = UDim2.new(1, -58, 0, 16)
-                Lbl.BackgroundTransparency = 1
-                Lbl.Font = Enum.Font.Gotham
-                Lbl.Text = item.Label
-                Lbl.TextSize = 11
+                local Lbl = CreateStylizedText(Card, item.Label, LayoutPreset.FontSmall, "TextMuted", false, 0)
+                Lbl.Position = UDim2.new(0, 44, 0, 12)
+                Lbl.Size = UDim2.new(1, -48, 0, 16)
                 Lbl.TextXAlignment = Enum.TextXAlignment.Left
-                Lbl.Parent = Card
-                BindTheme(Lbl, "TextColor3", "TextMuted", "CardBg")
 
-                local Val = Instance.new("TextLabel")
-                Val.Position = UDim2.new(0, 52, 0, 34)
-                Val.Size = UDim2.new(1, -58, 0, 22)
-                Val.BackgroundTransparency = 1
-                Val.Font = Enum.Font.GothamBold
-                Val.Text = item.Value
-                Val.TextSize = 15
+                local Val = CreateStylizedText(Card, item.Value, LayoutPreset.FontCardTitle + 2, "TextPrimary", true, 0)
+                Val.Position = UDim2.new(0, 44, 0, 30)
+                Val.Size = UDim2.new(1, -48, 0, 22)
                 Val.TextXAlignment = Enum.TextXAlignment.Left
-                Val.Parent = Card
-                BindTheme(Val, "TextColor3", "TextPrimary", "CardBg")
                 ValueLabels[i] = Val
             end
             return ValueLabels
@@ -1006,21 +1107,21 @@ local function ImGui(config)
 
         function Builder:Card(title, rightActionText, iconName)
             local CardFrame = Instance.new("Frame")
-            CardFrame.Size = UDim2.new(1, 0, 0, 40)
+            CardFrame.Size = UDim2.new(1, 0, 0, 36)
             CardFrame.AutomaticSize = Enum.AutomaticSize.Y
             CardFrame.Parent = scrollingPage
             BindTheme(CardFrame, "BackgroundColor3", "CardBg")
             ApplySurfaceStyle(CardFrame, 10, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
             local Pad = Instance.new("UIPadding")
-            Pad.PaddingTop = UDim.new(0, 12)
-            Pad.PaddingBottom = UDim.new(0, 12)
-            Pad.PaddingLeft = UDim.new(0, 14)
-            Pad.PaddingRight = UDim.new(0, 14)
+            Pad.PaddingTop = UDim.new(0, LayoutPreset.CardPadding)
+            Pad.PaddingBottom = UDim.new(0, LayoutPreset.CardPadding)
+            Pad.PaddingLeft = UDim.new(0, LayoutPreset.CardPadding)
+            Pad.PaddingRight = UDim.new(0, LayoutPreset.CardPadding)
             Pad.Parent = CardFrame
 
             local Layout = Instance.new("UIListLayout")
-            Layout.Padding = UDim.new(0, 8)
+            Layout.Padding = UDim.new(0, LayoutPreset.CardSpacing)
             Layout.SortOrder = Enum.SortOrder.LayoutOrder
             Layout.Parent = CardFrame
 
@@ -1034,31 +1135,19 @@ local function ImGui(config)
                 if iconName then
                     local hdrIcon = DrawVectorIcon(TopRow, iconName, 16, "Accent", BindTheme)
                     hdrIcon.Position = UDim2.new(0, 0, 0.5, -8)
-                    leftOffset = 24
+                    leftOffset = 22
                 end
 
-                local TitleTxt = Instance.new("TextLabel")
+                local TitleTxt = CreateStylizedText(TopRow, title, LayoutPreset.FontCardTitle, "TextPrimary", true, 0)
                 TitleTxt.Position = UDim2.new(0, leftOffset, 0, 0)
                 TitleTxt.Size = UDim2.new(0.7, -leftOffset, 1, 0)
-                TitleTxt.BackgroundTransparency = 1
-                TitleTxt.Font = Enum.Font.GothamBold
-                TitleTxt.Text = title
-                TitleTxt.TextSize = 13
                 TitleTxt.TextXAlignment = Enum.TextXAlignment.Left
-                TitleTxt.Parent = TopRow
-                BindTheme(TitleTxt, "TextColor3", "TextPrimary", "CardBg")
 
                 if rightActionText then
-                    local ActionTxt = Instance.new("TextLabel")
+                    local ActionTxt = CreateStylizedText(TopRow, rightActionText, LayoutPreset.FontSmall, "TextMuted", false, 0)
                     ActionTxt.Size = UDim2.new(0.3, -16, 1, 0)
                     ActionTxt.Position = UDim2.new(0.7, 0, 0, 0)
-                    ActionTxt.BackgroundTransparency = 1
-                    ActionTxt.Font = Enum.Font.GothamMedium
-                    ActionTxt.Text = rightActionText
-                    ActionTxt.TextSize = 11
                     ActionTxt.TextXAlignment = Enum.TextXAlignment.Right
-                    ActionTxt.Parent = TopRow
-                    BindTheme(ActionTxt, "TextColor3", "TextMuted", "CardBg")
 
                     local arr = DrawVectorIcon(TopRow, "ArrowRight", 12, "TextMuted", BindTheme)
                     arr.Position = UDim2.new(1, -12, 0.5, -6)
@@ -1070,14 +1159,14 @@ local function ImGui(config)
 
         function Builder:ActionGrid(items)
             local GridHolder = Instance.new("Frame")
-            GridHolder.Size = UDim2.new(1, 0, 0, 84)
+            GridHolder.Size = UDim2.new(1, 0, 0, 74)
             GridHolder.AutomaticSize = Enum.AutomaticSize.Y
             GridHolder.BackgroundTransparency = 1
             GridHolder.Parent = scrollingPage
 
             local Grid = Instance.new("UIGridLayout")
-            Grid.CellSize = UDim2.new(1 / math.min(#items, 6), -7, 0, 78)
-            Grid.CellPadding = UDim2.new(0, 8, 0, 8)
+            Grid.CellSize = UDim2.new(1 / math.min(#items, 6), -6, 0, 72)
+            Grid.CellPadding = UDim2.new(0, 6, 0, 6)
             Grid.Parent = GridHolder
 
             for _, action in ipairs(items) do
@@ -1091,24 +1180,18 @@ local function ImGui(config)
                 BindTheme(Tile, "BackgroundColor3", "ControlBg")
                 local _, tileStroke = ApplySurfaceStyle(Tile, 9, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-                local vec = DrawVectorIcon(Tile, action.Icon or "Bolt", 22, "Accent", BindTheme)
-                vec.Position = UDim2.new(0.5, -11, 0, 15)
+                local vec = DrawVectorIcon(Tile, action.Icon or "Bolt", 20, "Accent", BindTheme)
+                vec.Position = UDim2.new(0.5, -10, 0, 13)
 
-                local Lbl = Instance.new("TextLabel")
-                Lbl.Size = UDim2.new(1, -6, 0, 18)
-                Lbl.Position = UDim2.new(0, 3, 1, -24)
-                Lbl.BackgroundTransparency = 1
-                Lbl.Font = Enum.Font.GothamMedium
-                Lbl.Text = action.Name
-                Lbl.TextSize = 10
-                Lbl.Parent = Tile
-                BindTheme(Lbl, "TextColor3", "TextPrimary", "ControlBg")
+                local Lbl = CreateStylizedText(Tile, action.Name, LayoutPreset.FontSmall, "TextPrimary", true, 0)
+                Lbl.Size = UDim2.new(1, -4, 0, 18)
+                Lbl.Position = UDim2.new(0, 2, 1, -22)
 
                 Tile.MouseButton1Click:Connect(function()
                     local nextVal = not Self.Flags[flag]
                     Self:SetValue(flag, nextVal)
                     tileStroke.Color = nextVal and CurrentTheme.Accent or CurrentTheme.Stroke
-                    tileStroke.Transparency = nextVal and 0 or 0.25
+                    tileStroke.Transparency = nextVal and 0 or 0.22
                     if action.Callback then task.spawn(action.Callback, nextVal) end
                 end)
             end
@@ -1116,70 +1199,110 @@ local function ImGui(config)
 
         function Builder:Section(text, iconName)
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 24)
+            Row.Size = UDim2.new(1, 0, 0, 22)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
             local offset = 0
             if iconName then
-                local ic = DrawVectorIcon(Row, iconName, 15, "Accent", BindTheme)
+                local ic = DrawVectorIcon(Row, iconName, 14, "Accent", BindTheme)
                 ic.Position = UDim2.new(0, 0, 0.5, -7)
-                offset = 22
+                offset = 20
             end
 
-            local Lbl = Instance.new("TextLabel")
+            local Lbl = CreateStylizedText(Row, text, LayoutPreset.FontSection, "TextPrimary", true, 0)
             Lbl.Position = UDim2.new(0, offset, 0, 0)
             Lbl.Size = UDim2.new(1, -offset, 1, 0)
-            Lbl.BackgroundTransparency = 1
-            Lbl.Font = Enum.Font.GothamBold
-            Lbl.Text = text
-            Lbl.TextSize = 12
             Lbl.TextXAlignment = Enum.TextXAlignment.Left
-            Lbl.Parent = Row
-            BindTheme(Lbl, "TextColor3", "TextPrimary", "PanelBg")
         end
 
-        function Builder:Toggle(label, flag, default, callback)
+        -- 3 BENTUK CHECKBOX / TOGGLE: "Modern" (Switch), "Classic" (Check Box), "Biasa" (Standard ON/OFF)
+        function Builder:Toggle(label, flag, default, callback, customStyle)
             Self.Flags[flag] = (default == true)
+            local currentStyle = customStyle or Self.CheckboxStyle
 
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 28)
+            Row.Size = UDim2.new(1, 0, 0, LayoutPreset.RowHeight - 2)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
-            local Title = Instance.new("TextLabel")
-            Title.Size = UDim2.new(1, -52, 1, 0)
-            Title.BackgroundTransparency = 1
-            Title.Font = Enum.Font.GothamMedium
-            Title.Text = label
-            Title.TextSize = 12
+            local Title = CreateStylizedText(Row, label, LayoutPreset.FontBody, "TextMuted", false, 0)
+            Title.Size = UDim2.new(1, -60, 1, 0)
             Title.TextXAlignment = Enum.TextXAlignment.Left
-            Title.Parent = Row
-            BindTheme(Title, "TextColor3", "TextMuted", "PanelBg")
 
-            local SwitchBg = Instance.new("TextButton")
-            SwitchBg.Size = UDim2.fromOffset(38, 20)
-            SwitchBg.Position = UDim2.new(1, -38, 0.5, -10)
-            SwitchBg.Text = ""
-            SwitchBg.AutoButtonColor = false
-            SwitchBg.Parent = Row
-            BindTheme(SwitchBg, "BackgroundColor3", default and "Accent" or "ControlBg")
-            ApplySurfaceStyle(SwitchBg, 10, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
+            local HitBtn = Instance.new("TextButton")
+            HitBtn.Position = UDim2.new(1, -46, 0.5, -11)
+            HitBtn.Size = UDim2.fromOffset(46, 22)
+            HitBtn.Text = ""
+            HitBtn.AutoButtonColor = false
+            HitBtn.Parent = Row
+            BindTheme(HitBtn, "BackgroundColor3", "ControlBg")
+            local hitCorner, hitStroke = ApplySurfaceStyle(HitBtn, 10, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
+            -- Komponen Mode 1: Modern (Sliding Knob)
             local Knob = Instance.new("Frame")
             Knob.Size = UDim2.fromOffset(14, 14)
-            Knob.Position = default and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
-            Knob.BackgroundColor3 = Color3.fromRGB(250, 252, 255)
-            Knob.Parent = SwitchBg
+            Knob.BackgroundColor3 = Color3.fromRGB(248, 250, 255)
+            Knob.Parent = HitBtn
             ApplySurfaceStyle(Knob, 7, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-            SwitchBg.MouseButton1Click:Connect(function()
+            -- Komponen Mode 2: Classic (Vector Checkmark)
+            local CheckVec = DrawVectorIcon(HitBtn, "Check", 14, "TextPrimary", BindTheme)
+            CheckVec.Position = UDim2.fromScale(0.5, 0.5)
+            CheckVec.AnchorPoint = Vector2.new(0.5, 0.5)
+
+            -- Komponen Mode 3: Biasa / Standard (Teks ON / OFF 2.5D)
+            local StateText = CreateStylizedText(HitBtn, "OFF", LayoutPreset.FontSmall, "TextPrimary", true, 0)
+            StateText.Size = UDim2.fromScale(1, 1)
+
+            local function RenderToggleVisual(newStyle)
+                if newStyle and not customStyle then
+                    currentStyle = newStyle
+                end
+                local val = Self.Flags[flag]
+                local styleKey = string.lower(tostring(currentStyle))
+
+                if styleKey == "classic" then
+                    HitBtn.Size = UDim2.fromOffset(22, 22)
+                    HitBtn.Position = UDim2.new(1, -22, 0.5, -11)
+                    hitCorner.CornerRadius = UDim.new(0, Self.Rounded and 6 or 0)
+                    Knob.Visible = false
+                    StateText.Visible = false
+                    CheckVec.Visible = val
+                    HitBtn.BackgroundColor3 = val and CurrentTheme.Accent or CurrentTheme.ControlBg
+                    hitStroke.Color = val and CurrentTheme.AccentSecondary or CurrentTheme.Stroke
+                elseif styleKey == "biasa" or styleKey == "standard" then
+                    HitBtn.Size = UDim2.fromOffset(48, 22)
+                    HitBtn.Position = UDim2.new(1, -48, 0.5, -11)
+                    hitCorner.CornerRadius = UDim.new(0, Self.Rounded and 5 or 0)
+                    Knob.Visible = false
+                    CheckVec.Visible = false
+                    StateText.Visible = true
+                    StateText.Text = val and "ON" or "OFF"
+                    HitBtn.BackgroundColor3 = val and CurrentTheme.Accent or CurrentTheme.ControlBg
+                    hitStroke.Color = val and CurrentTheme.AccentSecondary or CurrentTheme.Stroke
+                else
+                    -- Default: "Modern"
+                    HitBtn.Size = UDim2.fromOffset(40, 20)
+                    HitBtn.Position = UDim2.new(1, -40, 0.5, -10)
+                    hitCorner.CornerRadius = UDim.new(0, Self.Rounded and 10 or 0)
+                    Knob.Visible = true
+                    CheckVec.Visible = false
+                    StateText.Visible = false
+                    HitBtn.BackgroundColor3 = val and CurrentTheme.Accent or CurrentTheme.ControlBg
+                    TweenService:Create(Knob, TWEEN_FAST, {
+                        Position = val and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+                    }):Play()
+                end
+            end
+
+            table.insert(Self.ToggleStyleUpdaters, RenderToggleVisual)
+            RenderToggleVisual(currentStyle)
+
+            HitBtn.MouseButton1Click:Connect(function()
                 local nextVal = not Self.Flags[flag]
                 Self:SetValue(flag, nextVal)
-                SwitchBg.BackgroundColor3 = nextVal and CurrentTheme.Accent or CurrentTheme.ControlBg
-                TweenService:Create(Knob, TweenInfo.new(0.16, Enum.EasingStyle.Quart), {
-                    Position = nextVal and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
-                }):Play()
+                RenderToggleVisual()
                 if callback then task.spawn(callback, nextVal) end
             end)
         end
@@ -1189,23 +1312,17 @@ local function ImGui(config)
             Self.Flags[flag] = default or min
 
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 30)
+            Row.Size = UDim2.new(1, 0, 0, LayoutPreset.RowHeight - 2)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
-            local Title = Instance.new("TextLabel")
+            local Title = CreateStylizedText(Row, label, LayoutPreset.FontBody, "TextMuted", false, 0)
             Title.Size = UDim2.new(0.42, 0, 1, 0)
-            Title.BackgroundTransparency = 1
-            Title.Font = Enum.Font.GothamMedium
-            Title.Text = label
-            Title.TextSize = 12
             Title.TextXAlignment = Enum.TextXAlignment.Left
-            Title.Parent = Row
-            BindTheme(Title, "TextColor3", "TextMuted", "PanelBg")
 
             local Track = Instance.new("TextButton")
-            Track.Size = UDim2.new(0.38, 0, 0, 5)
-            Track.Position = UDim2.new(0.43, 0, 0.5, -2)
+            Track.Size = UDim2.new(0.38, 0, 0, 6)
+            Track.Position = UDim2.new(0.43, 0, 0.5, -3)
             Track.Text = ""
             Track.AutoButtonColor = false
             Track.Parent = Row
@@ -1220,16 +1337,10 @@ local function ImGui(config)
             BindTheme(Fill, "BackgroundColor3", "Accent")
             ApplySurfaceStyle(Fill, 3, CurrentTheme.Accent, Self.ThemeBindings, Self.RadiusBindings, "Accent")
 
-            local ValTxt = Instance.new("TextLabel")
+            local ValTxt = CreateStylizedText(Row, tostring(Self.Flags[flag]) .. suffix, LayoutPreset.FontSmall, "TextPrimary", true, 0)
             ValTxt.Size = UDim2.new(0.18, 0, 1, 0)
             ValTxt.Position = UDim2.new(0.82, 0, 0, 0)
-            ValTxt.BackgroundTransparency = 1
-            ValTxt.Font = Enum.Font.GothamBold
-            ValTxt.Text = tostring(Self.Flags[flag]) .. suffix
-            ValTxt.TextSize = 11
             ValTxt.TextXAlignment = Enum.TextXAlignment.Right
-            ValTxt.Parent = Row
-            BindTheme(ValTxt, "TextColor3", "TextPrimary", "PanelBg")
 
             local sliding = false
             local function UpdateFromInput(input)
@@ -1264,23 +1375,17 @@ local function ImGui(config)
             Self.Flags[flag] = default or 0
 
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 30)
+            Row.Size = UDim2.new(1, 0, 0, LayoutPreset.RowHeight - 2)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
-            local Title = Instance.new("TextLabel")
+            local Title = CreateStylizedText(Row, label, LayoutPreset.FontBody, "TextMuted", false, 0)
             Title.Size = UDim2.new(0.55, 0, 1, 0)
-            Title.BackgroundTransparency = 1
-            Title.Font = Enum.Font.GothamMedium
-            Title.Text = label
-            Title.TextSize = 12
             Title.TextXAlignment = Enum.TextXAlignment.Left
-            Title.Parent = Row
-            BindTheme(Title, "TextColor3", "TextMuted", "PanelBg")
 
             local Controls = Instance.new("Frame")
-            Controls.Size = UDim2.fromOffset(96, 24)
-            Controls.Position = UDim2.new(1, -96, 0.5, -12)
+            Controls.Size = UDim2.fromOffset(92, 24)
+            Controls.Position = UDim2.new(1, -92, 0.5, -12)
             Controls.Parent = Row
             BindTheme(Controls, "BackgroundColor3", "ControlBg")
             ApplySurfaceStyle(Controls, 6, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
@@ -1288,29 +1393,23 @@ local function ImGui(config)
             local Minus = Instance.new("TextButton")
             Minus.Size = UDim2.new(0, 26, 1, 0)
             Minus.BackgroundTransparency = 1
-            Minus.Font = Enum.Font.GothamBold
+            Minus.FontFace = CustomFontFace
             Minus.Text = "-"
-            Minus.TextSize = 14
+            Minus.TextSize = 16
             Minus.Parent = Controls
             BindTheme(Minus, "TextColor3", "TextPrimary", "ControlBg")
 
-            local ValLbl = Instance.new("TextLabel")
+            local ValLbl = CreateStylizedText(Controls, tostring(Self.Flags[flag]), LayoutPreset.FontBody, "Accent", true, 0)
             ValLbl.Size = UDim2.new(1, -52, 1, 0)
             ValLbl.Position = UDim2.new(0, 26, 0, 0)
-            ValLbl.BackgroundTransparency = 1
-            ValLbl.Font = Enum.Font.GothamBold
-            ValLbl.Text = tostring(Self.Flags[flag])
-            ValLbl.TextSize = 11
-            ValLbl.Parent = Controls
-            BindTheme(ValLbl, "TextColor3", "Accent", "ControlBg")
 
             local Plus = Instance.new("TextButton")
             Plus.Size = UDim2.new(0, 26, 1, 0)
             Plus.Position = UDim2.new(1, -26, 0, 0)
             Plus.BackgroundTransparency = 1
-            Plus.Font = Enum.Font.GothamBold
+            Plus.FontFace = CustomFontFace
             Plus.Text = "+"
-            Plus.TextSize = 14
+            Plus.TextSize = 16
             Plus.Parent = Controls
             BindTheme(Plus, "TextColor3", "TextPrimary", "ControlBg")
 
@@ -1333,42 +1432,30 @@ local function ImGui(config)
             local idx = table.find(options, Self.Flags[flag]) or 1
 
             local Row = Instance.new("Frame")
-            Row.Size = UDim2.new(1, 0, 0, 30)
+            Row.Size = UDim2.new(1, 0, 0, LayoutPreset.RowHeight - 2)
             Row.BackgroundTransparency = 1
             Row.Parent = scrollingPage
 
-            local Title = Instance.new("TextLabel")
-            Title.Size = UDim2.new(0.45, 0, 1, 0)
-            Title.BackgroundTransparency = 1
-            Title.Font = Enum.Font.GothamMedium
-            Title.Text = label
-            Title.TextSize = 12
+            local Title = CreateStylizedText(Row, label, LayoutPreset.FontBody, "TextMuted", false, 0)
+            Title.Size = UDim2.new(0.44, 0, 1, 0)
             Title.TextXAlignment = Enum.TextXAlignment.Left
-            Title.Parent = Row
-            BindTheme(Title, "TextColor3", "TextMuted", "PanelBg")
 
             local DropBtn = Instance.new("TextButton")
-            DropBtn.Size = UDim2.new(0.52, 0, 0, 24)
-            DropBtn.Position = UDim2.new(0.48, 0, 0.5, -12)
+            DropBtn.Size = UDim2.new(0.54, 0, 0, 24)
+            DropBtn.Position = UDim2.new(0.46, 0, 0.5, -12)
             DropBtn.Text = ""
             DropBtn.AutoButtonColor = false
             DropBtn.Parent = Row
             BindTheme(DropBtn, "BackgroundColor3", "ControlBg")
             ApplySurfaceStyle(DropBtn, 6, CurrentTheme.Stroke, Self.ThemeBindings, Self.RadiusBindings)
 
-            local SelectedTxt = Instance.new("TextLabel")
-            SelectedTxt.Position = UDim2.new(0, 10, 0, 0)
-            SelectedTxt.Size = UDim2.new(1, -28, 1, 0)
-            SelectedTxt.BackgroundTransparency = 1
-            SelectedTxt.Font = Enum.Font.GothamMedium
-            SelectedTxt.Text = tostring(Self.Flags[flag])
-            SelectedTxt.TextSize = 11
+            local SelectedTxt = CreateStylizedText(DropBtn, tostring(Self.Flags[flag]), LayoutPreset.FontSmall, "TextPrimary", true, 0)
+            SelectedTxt.Position = UDim2.new(0, 8, 0, 0)
+            SelectedTxt.Size = UDim2.new(1, -24, 1, 0)
             SelectedTxt.TextXAlignment = Enum.TextXAlignment.Left
-            SelectedTxt.Parent = DropBtn
-            BindTheme(SelectedTxt, "TextColor3", "TextPrimary", "ControlBg")
 
             local chev = DrawVectorIcon(DropBtn, "ChevronDown", 12, "TextMuted", BindTheme)
-            chev.Position = UDim2.new(1, -18, 0.5, -6)
+            chev.Position = UDim2.new(1, -16, 0.5, -6)
 
             DropBtn.MouseButton1Click:Connect(function()
                 idx = (idx % #options) + 1
@@ -1383,27 +1470,21 @@ local function ImGui(config)
             Self.Flags[flag] = default or ""
 
             local BoxHolder = Instance.new("Frame")
-            BoxHolder.Size = UDim2.new(1, 0, 0, 34)
+            BoxHolder.Size = UDim2.new(1, 0, 0, LayoutPreset.RowHeight)
             BoxHolder.BackgroundTransparency = 1
             BoxHolder.Parent = scrollingPage
 
-            local Title = Instance.new("TextLabel")
-            Title.Size = UDim2.new(0.4, 0, 1, 0)
-            Title.BackgroundTransparency = 1
-            Title.Font = Enum.Font.GothamMedium
-            Title.Text = label
-            Title.TextSize = 12
+            local Title = CreateStylizedText(BoxHolder, label, LayoutPreset.FontBody, "TextMuted", false, 0)
+            Title.Size = UDim2.new(0.42, 0, 1, 0)
             Title.TextXAlignment = Enum.TextXAlignment.Left
-            Title.Parent = BoxHolder
-            BindTheme(Title, "TextColor3", "TextMuted", "PanelBg")
 
             local InputBox = Instance.new("TextBox")
-            InputBox.Size = UDim2.new(0.58, 0, 0, 28)
-            InputBox.Position = UDim2.new(0.42, 0, 0.5, -14)
-            InputBox.Font = Enum.Font.GothamMedium
+            InputBox.Size = UDim2.new(0.56, 0, 0, 26)
+            InputBox.Position = UDim2.new(0.44, 0, 0.5, -13)
+            InputBox.FontFace = CustomFontFace
             InputBox.PlaceholderText = placeholder or "Enter value..."
             InputBox.Text = Self.Flags[flag]
-            InputBox.TextSize = 12
+            InputBox.TextSize = LayoutPreset.FontSmall
             InputBox.ClearTextOnFocus = false
             InputBox.Parent = BoxHolder
             BindTheme(InputBox, "BackgroundColor3", "ControlBg")
@@ -1420,7 +1501,7 @@ local function ImGui(config)
         function Builder:ActivityTimeline(entries)
             for _, item in ipairs(entries) do
                 local Row = Instance.new("Frame")
-                Row.Size = UDim2.new(1, 0, 0, 24)
+                Row.Size = UDim2.new(1, 0, 0, 22)
                 Row.BackgroundTransparency = 1
                 Row.Parent = scrollingPage
 
@@ -1431,27 +1512,15 @@ local function ImGui(config)
                 BindTheme(Dot, "BackgroundColor3", "Accent")
                 ApplySurfaceStyle(Dot, 4, CurrentTheme.Accent, Self.ThemeBindings, Self.RadiusBindings, "Accent")
 
-                local EventTxt = Instance.new("TextLabel")
-                EventTxt.Position = UDim2.new(0, 22, 0, 0)
+                local EventTxt = CreateStylizedText(Row, item.Text, LayoutPreset.FontBody, "TextPrimary", false, 0)
+                EventTxt.Position = UDim2.new(0, 20, 0, 0)
                 EventTxt.Size = UDim2.new(0.7, 0, 1, 0)
-                EventTxt.BackgroundTransparency = 1
-                EventTxt.Font = Enum.Font.GothamMedium
-                EventTxt.Text = item.Text
-                EventTxt.TextSize = 12
                 EventTxt.TextXAlignment = Enum.TextXAlignment.Left
-                EventTxt.Parent = Row
-                BindTheme(EventTxt, "TextColor3", "TextPrimary", "CardBg")
 
-                local TimeTxt = Instance.new("TextLabel")
+                local TimeTxt = CreateStylizedText(Row, item.Time, LayoutPreset.FontSmall, "TextMuted", false, 0)
                 TimeTxt.Position = UDim2.new(0.72, 0, 0, 0)
                 TimeTxt.Size = UDim2.new(0.28, 0, 1, 0)
-                TimeTxt.BackgroundTransparency = 1
-                TimeTxt.Font = Enum.Font.Gotham
-                TimeTxt.Text = item.Time
-                TimeTxt.TextSize = 11
                 TimeTxt.TextXAlignment = Enum.TextXAlignment.Right
-                TimeTxt.Parent = Row
-                BindTheme(TimeTxt, "TextColor3", "TextMuted", "CardBg")
             end
         end
 
@@ -1465,22 +1534,23 @@ local function ImGui(config)
         local Page = Instance.new("ScrollingFrame")
         Page.Size = UDim2.fromScale(1, 1)
         Page.BackgroundTransparency = 1
-        Page.ScrollBarThickness = 3
+        Page.ScrollBarThickness = 2
         Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
         Page.CanvasSize = UDim2.new(0, 0, 0, 0)
         Page.Visible = false
         Page.Parent = parent
         BindTheme(Page, "ScrollBarImageColor3", "Accent")
 
+        local p = LayoutPreset.PanelPadding
         local Pad = Instance.new("UIPadding")
-        Pad.PaddingTop = UDim.new(0, 16)
-        Pad.PaddingBottom = UDim.new(0, 16)
-        Pad.PaddingLeft = UDim.new(0, 16)
-        Pad.PaddingRight = UDim.new(0, 16)
+        Pad.PaddingTop = UDim.new(0, p)
+        Pad.PaddingBottom = UDim.new(0, p)
+        Pad.PaddingLeft = UDim.new(0, p)
+        Pad.PaddingRight = UDim.new(0, p)
         Pad.Parent = Page
 
         local Layout = Instance.new("UIListLayout")
-        Layout.Padding = UDim.new(0, 12)
+        Layout.Padding = UDim.new(0, LayoutPreset.ItemSpacing)
         Layout.SortOrder = Enum.SortOrder.LayoutOrder
         Layout.Parent = Page
         return Page
@@ -1491,7 +1561,7 @@ local function ImGui(config)
         local RightPage = CreateScrollPage(RightPanel)
 
         local NavBtn = Instance.new("TextButton")
-        NavBtn.Size = UDim2.new(1, 0, 0, 38)
+        NavBtn.Size = UDim2.new(1, 0, 0, 36)
         NavBtn.BackgroundTransparency = 1
         NavBtn.Text = ""
         NavBtn.AutoButtonColor = false
@@ -1508,20 +1578,14 @@ local function ImGui(config)
             IconImg.Image = ResolveImage(logo)
             IconImg.Parent = NavBtn
         else
-            local vecTabIcon = DrawVectorIcon(NavBtn, logo or name, 18, "TextMuted", BindTheme)
-            vecTabIcon.Position = UDim2.new(0, 12, 0.5, -9)
+            local vecTabIcon = DrawVectorIcon(NavBtn, logo or name, 17, "TextMuted", BindTheme)
+            vecTabIcon.Position = UDim2.new(0, 12, 0.5, -8)
         end
 
-        local NameLbl = Instance.new("TextLabel")
-        NameLbl.Position = UDim2.new(0, 42, 0, 0)
-        NameLbl.Size = UDim2.new(1, -48, 1, 0)
-        NameLbl.BackgroundTransparency = 1
-        NameLbl.Font = Enum.Font.GothamMedium
-        NameLbl.Text = name
-        NameLbl.TextSize = 13
+        local NameLbl = CreateStylizedText(NavBtn, name, LayoutPreset.FontBody + 1, "TextPrimary", true, 0)
+        NameLbl.Position = UDim2.new(0, 38, 0, 0)
+        NameLbl.Size = UDim2.new(1, -44, 1, 0)
         NameLbl.TextXAlignment = Enum.TextXAlignment.Left
-        NameLbl.Parent = NavBtn
-        BindTheme(NameLbl, "TextColor3", "TextMuted", "PanelBg")
 
         local ActiveLine = Instance.new("Frame")
         ActiveLine.Size = UDim2.new(0.84, 0, 0, 2)
@@ -1547,7 +1611,6 @@ local function ImGui(config)
                 if f.HasCustomRight then f.RightPage.Visible = false end
                 f.ActiveLine.Visible = false
                 f.NavBtn.BackgroundTransparency = 1
-                f.NameLbl.Font = Enum.Font.GothamMedium
             end
             CenterPage.Visible = true
             if FeatureObj.HasCustomRight then
@@ -1556,8 +1619,7 @@ local function ImGui(config)
                 Self.Features[1].RightPage.Visible = true
             end
             ActiveLine.Visible = true
-            NavBtn.BackgroundTransparency = 0.88
-            NameLbl.Font = Enum.Font.GothamBold
+            NavBtn.BackgroundTransparency = 0.86
             Self.ActiveFeature = FeatureObj
         end
 
@@ -1581,6 +1643,8 @@ local function ImGui(config)
         end
     end
 
+    -- Default Call(3) berjalan otomatis sehingga ImGui() langsung siap pakai
+    Self.Call(Self.SideCount)
     return Self
 end
 
