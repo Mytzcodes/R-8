@@ -33,12 +33,11 @@ Framework **R&8_DV ImGui v5.0** adalah arsitektur UI Roblox berbasis Luau dengan
 
 ## Cara Penggunaan (Via GitHub RAW)
 
-> **Catatan:** Link GitHub RAW dipertahankan sepenuhnya untuk pemanggilan aset & script langsung dari repositori GitHub.
+> **Penting:** Pastikan file `r&8_dv.lua` terbaru sudah di-*push* ke repositori GitHub `Mytzcodes/R-8` (branch `main`). Nama file `r&8_dv.lua` menggunakan URL-encode `%26` (`r%268_dv.lua`) agar tidak terkena **HTTP 404**.
 
 ```lua
--- 1. Panggil Framework R&8_DV (Jangan ubah link GitHub RAW Anda)
-local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/R8_DV_ImGui.lua"))()
--- (Atau gunakan .../r%268_dv.lua sesuai nama file pada branch main GitHub Anda)
+-- 1. Panggil Framework R&8_DV langsung via GitHub RAW
+local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r%268_dv.lua"))()
 
 -- 2. Inisialisasi Jendela Utama (3 Panel atau 2 Panel)
 local UI = ImGui({

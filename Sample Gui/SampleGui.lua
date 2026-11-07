@@ -1,13 +1,23 @@
--- 1. Panggil Framework R&8_DV (Link GitHub RAW dipertahankan sesuai repo)
-local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/R8_DV_ImGui.lua"))()
+-- 1. Panggil Framework R&8_DV via GitHub RAW (Mendukung semua Executor PC & Mobile)
+local GITHUB_RAW_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r%268_dv.lua"
+local okFetch, rawScript = pcall(function()
+    return game:HttpGet(GITHUB_RAW_URL)
+end)
+if not okFetch or type(rawScript) ~= "string" or #rawScript < 128 or string.sub(rawScript, 1, 4) == "404:" then
+    okFetch, rawScript = pcall(function()
+        return game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/r&8_dv.lua")
+    end)
+end
+assert(okFetch and type(rawScript) == "string" and #rawScript > 128, "[R&8_DV] HTTP 404: Pastikan file r&8_dv.lua sudah di-upload ke GitHub Mytzcodes/R-8 (branch main).")
+
+local ImGui = loadstring(rawScript)()
 
 -- 2. Inisialisasi Jendela Minimalist Monochrome dengan 2.5D / 3D Colourful Typography
--- Logo GitHub, Vector Icon, Smooth Loader, dan Single-Border Popup Minimize Icon diurus otomatis!
 local UI = ImGui({
     Title = "DRY CURSED  -  IMGUI",
     Theme = "Minimalist Monochrome", -- "Minimalist Monochrome" | "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai"
     CheckboxStyle = "Modern",        -- "Modern" (Pill Switch) | "Checkbox" (Square Check)
-    Text3D = true,                   -- Aktifkan 2.5D / 3D Colourful Gradient Text (Ringan, 0% FPS Drop)
+    Text3D = true,                   -- Teks berwarna 2.5D / 3D ringan (0% FPS Drop)
     AutoLoading = true
 }).Call(3)
 
@@ -15,10 +25,18 @@ local feature = UI.feature
 local function center(fn) return fn end
 local function right(fn) return fn end
 
+local ThemeChoices = UI.GetThemes and UI:GetThemes() or {
+    "Minimalist Monochrome",
+    "Blue Night Sky",
+    "Violet Amethyst",
+    "Orange Sand",
+    "Midnight Monokai"
+}
+
 -- =========================================================================
 -- KATEGORI 1: OVERVIEW
 -- =========================================================================
-UI:Category("Overview")
+if UI.Category then UI:Category("Overview") end
 
 feature("Home", "Home")({
     center = center(function(c)
@@ -32,12 +50,12 @@ feature("Home", "Home")({
 
         local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt")
         QuickCard:ActionGrid({
-            { Icon = "AutoFarm",  Name = "Auto Farm",     Flag = "QuickAutoFarm" },
-            { Icon = "Teleports", Name = "Teleport",      Flag = "QuickTP" },
-            { Icon = "Visuals",   Name = "ESP Box",       Flag = "QuickESP" },
-            { Icon = "Speed",     Name = "Speed Override",Flag = "QuickSpeed" },
-            { Icon = "Jump",      Name = "Infinite Jump", Flag = "QuickInfJump" },
-            { Icon = "Collect",   Name = "Collect All",   Flag = "QuickCollect" }
+            { Icon = "AutoFarm",  Name = "Auto Farm",      Flag = "QuickAutoFarm" },
+            { Icon = "Teleports", Name = "Teleport",       Flag = "QuickTP" },
+            { Icon = "Visuals",   Name = "ESP Box",        Flag = "QuickESP" },
+            { Icon = "Speed",     Name = "Speed Override", Flag = "QuickSpeed" },
+            { Icon = "Jump",      Name = "Infinite Jump",  Flag = "QuickInfJump" },
+            { Icon = "Collect",   Name = "Collect All",    Flag = "QuickCollect" }
         })
 
         local ActivityCard = c:Card("Recent Activity", "Live Logs", "Clock")
@@ -49,25 +67,29 @@ feature("Home", "Home")({
         })
     end),
 
-    -- Panel Kanan Global (Otomatis tampil di tab yang tidak memiliki panel kanan khusus)
+    -- Panel Kanan Global
     right = right(function(r)
         r:Section("Theme & Typography", "Palette")
-        r:Dropdown("Color Style", "ThemeSelect", UI:GetThemes(), "Minimalist Monochrome", function(selectedTheme)
+        r:Dropdown("Color Style", "ThemeSelect", ThemeChoices, "Minimalist Monochrome", function(selectedTheme)
             UI:SetTheme(selectedTheme)
         end)
         r:Toggle("2.5D / 3D Colourful Font", "Text3DToggle", true, function(state)
-            UI:SetText3D(state)
+            if UI.SetText3D then UI:SetText3D(state) end
         end)
         r:Dropdown("Checkbox Style", "CheckboxStyleMode", {
             "Modern",
             "Checkbox"
         }, "Modern", function(mode)
-            UI:SetCheckboxStyle(mode)
+            if UI.SetCheckboxStyle then UI:SetCheckboxStyle(mode) end
         end)
 
         r:Section("Window & Layout", "Sliders")
         r:Slider("UI Scale", "UIScalePct", 60, 130, 100, "%", function(val)
-            UI:SetScale(val / 100)
+            if UI.SetScale then
+                UI:SetScale(val / 100)
+            else
+                UI.UIScale = val / 100
+            end
         end)
         r:Slider("Transparency", "BgTransPct", 0, 55, 4, "%", function(val)
             UI:SetTransparency(val / 100)
@@ -76,11 +98,13 @@ feature("Home", "Home")({
         r:Toggle("Rounded Borders", "RoundedState", true, function(state)
             UI:SetRounded(state)
         end)
-        r:Keybind("Toggle Menu Key", "MenuHotkey", Enum.KeyCode.RightShift, function(newKey)
-            if newKey then
-                UI.ToggleKey = newKey
-            end
-        end)
+        if r.Keybind then
+            r:Keybind("Toggle Menu Key", "MenuHotkey", Enum.KeyCode.RightShift, function(newKey)
+                if newKey then
+                    UI.ToggleKey = newKey
+                end
+            end)
+        end
 
         r:Section("Performance", "Bolt")
         r:Toggle("FPS Boost", "FPSBoost", false)
@@ -91,9 +115,9 @@ feature("Home", "Home")({
 -- =========================================================================
 -- KATEGORI 2: MODULES (SESUAI REFERENSI MENU)
 -- =========================================================================
-UI:Category("Modules")
+if UI.Category then UI:Category("Modules") end
 
--- Tab Combat (Referensi Card dengan Subtitle & Master Header Switch + Keybind)
+-- Tab Combat (Card dengan Subtitle & Master Header Switch + Keybind)
 feature("Combat", "Combat")({
     center = center(function(c)
         c:Header("Combat", "Target assistance, response policy & keybind limits", "Targets")
@@ -119,48 +143,55 @@ feature("Combat", "Combat")({
             ToggleFlag = "MasterAimProfile",
             Default = false
         })
-        ProfileCard:Keybind("Activation Key", "AimActivationKey", Enum.KeyCode.Q)
+        if ProfileCard.Keybind then
+            ProfileCard:Keybind("Activation Key", "AimActivationKey", Enum.KeyCode.Q)
+        end
         ProfileCard:Slider("Response Smoothness", "AimSmoothness", 0.10, 1.00, 0.50, "x", nil, 0.05)
         ProfileCard:Stepper("Target Priority Slot", "PriorityLevel", 1, 1)
     end)
 })
 
--- Tab Auto Farm (Referensi Interactive Feature Hover Cards + 5x5 Tile Breaker Grid)
+-- Tab Auto Farm (Interactive Feature Hover Cards + 5x5 Tile Breaker Grid)
 feature("Bot", "Auto Farm")({
     center = center(function(c)
         c:Header("Automation", "Interactive hover cards & automated farming routines", "Active")
 
-        c:FeatureCard({
-            Icon = "Bot",
-            Title = "Autofarm",
-            Description = "Automatically farming without effort touching the screen.",
-            Flag = "CardAutofarm",
-            Default = true
-        })
-
-        c:FeatureCard({
-            Icon = "Chat",
-            Title = "Spammer",
-            Description = "Automatically send chat messages without typing manually.",
-            Flag = "CardSpammer",
-            Default = false
-        })
-
-        c:FeatureCard({
-            Icon = "Collect",
-            Title = "Collect",
-            Description = "Automation utility for collecting nearby dropped items.",
-            Flag = "CardCollect",
-            Default = false
-        })
-
-        c:FeatureCard({
-            Icon = "Fish",
-            Title = "Fishing",
-            Description = "Automatically pull rod when fish bite is detected.",
-            Flag = "CardFishing",
-            Default = false
-        })
+        if c.FeatureCard then
+            c:FeatureCard({
+                Icon = "Bot",
+                Title = "Autofarm",
+                Description = "Automatically farming without effort touching the screen.",
+                Flag = "CardAutofarm",
+                Default = true
+            })
+            c:FeatureCard({
+                Icon = "Chat",
+                Title = "Spammer",
+                Description = "Automatically send chat messages without typing manually.",
+                Flag = "CardSpammer",
+                Default = false
+            })
+            c:FeatureCard({
+                Icon = "Collect",
+                Title = "Collect",
+                Description = "Automation utility for collecting nearby dropped items.",
+                Flag = "CardCollect",
+                Default = false
+            })
+            c:FeatureCard({
+                Icon = "Fish",
+                Title = "Fishing",
+                Description = "Automatically pull rod when fish bite is detected.",
+                Flag = "CardFishing",
+                Default = false
+            })
+        else
+            local FallbackCard = c:Card("Farming Modules", nil, "AutoFarm")
+            FallbackCard:Toggle("Autofarm", "CardAutofarm", true)
+            FallbackCard:Toggle("Spammer", "CardSpammer", false)
+            FallbackCard:Toggle("Collect", "CardCollect", false)
+            FallbackCard:Toggle("Fishing", "CardFishing", false)
+        end
     end),
 
     right = right(function(r)
@@ -170,11 +201,13 @@ feature("Bot", "Auto Farm")({
         })
         TileCard:Input("Target Block", "BlockToBreak", "Block name...", "Bountiful Lattice Fence")
         TileCard:Slider("Hit Delay", "FarmHitDelay", 60, 400, 160, " ms")
-        TileCard:TileGrid("Select tile to break (P = Player)", "BreakMatrix", 5, 5)
+        if TileCard.TileGrid then
+            TileCard:TileGrid("Select tile to break (P = Player)", "BreakMatrix", 5, 5)
+        end
     end)
 })
 
--- Tab Visuals (Referensi Player Geometry & Overlay Style Cards)
+-- Tab Visuals (Player Geometry & Overlay Style Cards)
 feature("Visuals", "Visuals")({
     center = center(function(c)
         c:Header("Visuals", "Player geometry, status flags & world overlay style", "Overlay")
@@ -210,12 +243,14 @@ feature("Player", "Player")({
             Subtitle = "Adjust WalkSpeed and JumpPower safely"
         })
         MoveCard:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, "", function(val)
-            local char = game.Players.LocalPlayer and game.Players.LocalPlayer.Character
+            local lp = game:GetService("Players").LocalPlayer
+            local char = lp and lp.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if hum then hum.WalkSpeed = val end
         end)
         MoveCard:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, "", function(val)
-            local char = game.Players.LocalPlayer and game.Players.LocalPlayer.Character
+            local lp = game:GetService("Players").LocalPlayer
+            local char = lp and lp.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if hum then hum.JumpPower = val end
         end)
@@ -224,9 +259,11 @@ feature("Player", "Player")({
             Subtitle = "Instant player & world coordinate warping"
         })
         TpCard:Input("Target Player", "TpTarget", "Username...", "")
-        TpCard:Button("Warp to Target Player", "EXECUTE", "Teleports", function()
-            print("[R&8_DV] Teleport target:", UI:GetValue("TpTarget"))
-        end)
+        if TpCard.Button then
+            TpCard:Button("Warp to Target Player", "EXECUTE", "Teleports", function()
+                print("[R&8_DV] Teleport target:", UI:GetValue("TpTarget"))
+            end)
+        end
     end)
 })
 
@@ -238,8 +275,10 @@ feature("Misc", "Misc")({
             Subtitle = "Quick server & interface actions"
         })
         UtilCard:Toggle("Notifications", "NotifyToggle", true)
-        UtilCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
-            UI:MinimizeToIcon()
-        end)
+        if UtilCard.Button then
+            UtilCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
+                UI:MinimizeToIcon()
+            end)
+        end
     end)
 })

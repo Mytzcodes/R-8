@@ -15,15 +15,16 @@ local LocalPlayer = Players.LocalPlayer
 
 -- // HARDCODED MASTER LOGO DARI GITHUB (JANGAN DIUBAH) //
 local MASTER_LOGO_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Assets/icons.png"
-local MASTER_CACHE_FILE = "R8DV_MasterLogo_v4.png"
+local MASTER_CACHE_FILE = "R8DV_MasterLogo_v5.png"
 
 local function GetSafeGuiParent()
     local ok, res = pcall(function()
         return (gethui and gethui()) or CoreGui
     end)
     if ok and res then return res end
-    if LocalPlayer then
-        return LocalPlayer:WaitForChild("PlayerGui")
+    local lp = LocalPlayer or Players.LocalPlayer
+    if lp then
+        return lp:WaitForChild("PlayerGui")
     end
     return CoreGui
 end
@@ -44,7 +45,7 @@ local function ResolveImage(source)
                 local fileName = (source == MASTER_LOGO_URL) and MASTER_CACHE_FILE or ("R8DV_Cache_" .. tostring(#source * 17) .. ".png")
                 if not isfile(fileName) then
                     local raw = game:HttpGet(source, true)
-                    if raw and #raw > 0 then
+                    if raw and #raw > 128 and not string.find(string.sub(raw, 1, 32), "404", 1, true) then
                         writefile(fileName, raw)
                     end
                 end
@@ -560,7 +561,14 @@ local function ImGui(config)
         return copy
     end
 
-    -- Bersihkan instance lama jika script di-eksekusi ulang di executor
+    -- Bersihkan instance lama jika script di-eksekusi ulang di executor (PC maupun Mobile)
+    local globalEnv = (getgenv and getgenv()) or _G
+    if type(globalEnv) == "table" and globalEnv.__R8_DV_ACTIVE_UI then
+        pcall(function()
+            globalEnv.__R8_DV_ACTIVE_UI:Destroy()
+        end)
+    end
+
     local SafeParent = GetSafeGuiParent()
     pcall(function()
         for _, child in ipairs(SafeParent:GetChildren()) do
@@ -681,8 +689,9 @@ local function ImGui(config)
         local cam = workspace.CurrentCamera
         if not cam then return uiScaleValue end
         local vp = cam.ViewportSize
-        local autoFit = math.min(1, (vp.X * 0.94) / 1020, (vp.Y * 0.92) / 600)
-        return math.clamp(autoFit * uiScaleValue, 0.42, 1.5)
+        if vp.X <= 1 or vp.Y <= 1 then return uiScaleValue end
+        local autoFit = math.min(1, (vp.X * 0.94) / 1020, (vp.Y * 0.90) / 600)
+        return math.clamp(autoFit * uiScaleValue, 0.34, 1.5)
     end
 
     local function UpdateResponsiveScale()
@@ -2144,9 +2153,12 @@ local function ImGui(config)
                     FastTween(trackStroke, 0.14, {Color = CurrentTheme.Stroke, Transparency = 0.30})
                 end
             end)
+            local ancestorScroll = scrollingPage:IsA("ScrollingFrame") and scrollingPage or scrollingPage:FindFirstAncestorOfClass("ScrollingFrame")
+
             HitArea.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     sliding = true
+                    if ancestorScroll then ancestorScroll.ScrollingEnabled = false end
                     FastTween(Thumb, 0.10, {Size = UDim2.fromOffset(15, 15)})
                     UpdateFromInput(input)
                 end
@@ -2154,6 +2166,7 @@ local function ImGui(config)
             TrackConn(UserInputService.InputEnded:Connect(function(input)
                 if sliding and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
                     sliding = false
+                    if ancestorScroll then ancestorScroll.ScrollingEnabled = true end
                     if not hovered then
                         FastTween(Thumb, 0.14, {Size = UDim2.fromOffset(11, 11)})
                         FastTween(trackStroke, 0.14, {Color = CurrentTheme.Stroke, Transparency = 0.30})
@@ -2531,8 +2544,7 @@ local function ImGui(config)
             KeyBtn.Position = UDim2.new(1, 0, 0.5, -12)
             KeyBtn.AnchorPoint = Vector2.new(1, 0)
             KeyBtn.BorderSizePixel = 0
-            KeyBtn.Font = Enum.Font.GothamBold
-            KeyBtn.TextSize = 11
+            KeyBtn.Text = ""
             KeyBtn.AutoButtonColor = false
             KeyBtn.Parent = Row
             BindTheme(KeyBtn, "BackgroundColor3", "ControlBg")
@@ -2548,10 +2560,43 @@ local function ImGui(config)
                 if type(k) == "string" and k ~= "" then return k end
                 return "None"
             end
-            KeyBtn.Text = FormatKey(Self.Flags[flag])
-            ApplyRichText(KeyBtn, "Title25D", "ControlBg")
+
+            local KeyLbl = Instance.new("TextLabel")
+            KeyLbl.AutomaticSize = Enum.AutomaticSize.X
+            KeyLbl.Size = UDim2.new(0, 0, 1, 0)
+            KeyLbl.BackgroundTransparency = 1
+            KeyLbl.Font = Enum.Font.GothamBold
+            KeyLbl.TextSize = 11
+            KeyLbl.Text = FormatKey(Self.Flags[flag])
+            KeyLbl.Parent = KeyBtn
+            ApplyRichText(KeyLbl, "Title25D", "ControlBg")
 
             local listening = false
+            local bindConn = nil
+
+            local function StopListening(newKey, updateFlag)
+                if bindConn then
+                    bindConn:Disconnect()
+                    bindConn = nil
+                end
+                listening = false
+                task.defer(function() isBindingKey = false end)
+                if updateFlag then
+                    KeyLbl.Text = FormatKey(newKey)
+                    Self:SetValue(flag, newKey)
+                    if callback then task.spawn(callback, newKey) end
+                else
+                    KeyLbl.Text = FormatKey(Self.Flags[flag])
+                end
+                FastTween(kbStroke, 0.14, {Color = CurrentTheme.Stroke, Transparency = 0.28})
+            end
+
+            Self:OnValueChanged(flag, function(v)
+                if not listening then
+                    KeyLbl.Text = FormatKey(v)
+                end
+            end)
+
             KeyBtn.MouseEnter:Connect(function()
                 if not listening then
                     FastTween(kbStroke, 0.12, {Color = CurrentTheme.HoverStroke, Transparency = 0.08})
@@ -2564,23 +2609,20 @@ local function ImGui(config)
             end)
 
             KeyBtn.MouseButton1Click:Connect(function()
-                if listening then return end
+                if listening then
+                    -- Klik/tap ulang pada tombol (terutama di Mobile tanpa keyboard) membatalkan mode rekam
+                    StopListening(nil, false)
+                    return
+                end
                 listening = true
                 isBindingKey = true
-                KeyBtn.Text = "[ ... ]"
+                KeyLbl.Text = "[ ... ]"
                 FastTween(kbStroke, 0.12, {Color = CurrentTheme.Accent, Transparency = 0})
 
-                local bindConn
                 bindConn = UserInputService.InputBegan:Connect(function(input)
                     if input.UserInputType == Enum.UserInputType.Keyboard then
-                        bindConn:Disconnect()
-                        listening = false
-                        task.defer(function() isBindingKey = false end)
                         local chosen = (input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace) and nil or input.KeyCode
-                        KeyBtn.Text = FormatKey(chosen)
-                        FastTween(kbStroke, 0.14, {Color = CurrentTheme.Stroke, Transparency = 0.28})
-                        Self:SetValue(flag, chosen)
-                        if callback then task.spawn(callback, chosen) end
+                        StopListening(chosen, true)
                     end
                 end)
             end)
@@ -3012,7 +3054,7 @@ local function ImGui(config)
     end
 
     -- Metatable agar penulisan lama `UI.UIScale = val / 100` langsung meng-update ukuran UI secara live!
-    return setmetatable(Self, {
+    local InstanceProxy = setmetatable(Self, {
         __index = function(_, key)
             if key == "UIScale" then
                 return uiScaleValue
@@ -3027,6 +3069,12 @@ local function ImGui(config)
             end
         end
     })
+
+    if type(globalEnv) == "table" then
+        globalEnv.__R8_DV_ACTIVE_UI = InstanceProxy
+    end
+
+    return InstanceProxy
 end
 
 return ImGui
