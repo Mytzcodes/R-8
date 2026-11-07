@@ -12,13 +12,16 @@ assert(okFetch and type(rawScript) == "string" and #rawScript > 128, "[R&8_DV] H
 
 local ImGui = loadstring(rawScript)()
 
--- 2. Inisialisasi Jendela Minimalist Monochrome dengan 2.5D / 3D Colourful Typography
+-- 2. Inisialisasi Jendela Colourful Gradient & Heavy Display Typography (60 FPS Instant)
 local UI = ImGui({
-    Title = "DRY CURSED  -  IMGUI",
-    Theme = "Minimalist Monochrome", -- "Minimalist Monochrome" | "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai"
+    Title = "DRY CURSED - IMGUI",
+    BrandTitle = "R&8_DV",           -- Judul huruf besar ekstra-tebal di bawah logo sidebar
+    BrandSubtitle = "IMGUI SUITE",   -- Sub-judul bergradasi aksen di bawah logo sidebar
+    Theme = "Blue Night Sky",        -- "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai" | "Minimalist Monochrome"
     CheckboxStyle = "Modern",        -- "Modern" (Pill Switch) | "Checkbox" (Square Check)
-    Text3D = true,                   -- Teks berwarna 2.5D / 3D ringan (0% FPS Drop)
-    AutoLoading = true
+    Text3D = true,                   -- Teks berwarna 2.5D / 3D dual-hue gradient (0% FPS Drop)
+    LetterSpacing = 1,               -- Spasi antar huruf header & judul (0 - 3)
+    AutoLoading = false              -- Langsung buka instan 0ms tanpa delay/jeda!
 }).Call(3)
 
 local feature = UI.feature
@@ -26,11 +29,11 @@ local function center(fn) return fn end
 local function right(fn) return fn end
 
 local ThemeChoices = UI.GetThemes and UI:GetThemes() or {
-    "Minimalist Monochrome",
     "Blue Night Sky",
     "Violet Amethyst",
     "Orange Sand",
-    "Midnight Monokai"
+    "Midnight Monokai",
+    "Minimalist Monochrome"
 }
 
 -- =========================================================================
@@ -40,19 +43,28 @@ if UI.Category then UI:Category("Overview") end
 
 feature("Home", "Home")({
     center = center(function(c)
-        c:Header("Home", "Minimalist monochrome surface with colourful 2.5D / 3D typography", "Game Ready")
+        c:Header("Home", "Vibrant dual-hue gradients & heavy display typography", "v5.2 Live")
+
+        if c.HighlightBanner then
+            c:HighlightBanner(
+                "R&8_DV V5.2 // COLOURFUL EDITION",
+                "BOLD FONTS. BIGGER GRADIENT ENERGY.",
+                "Dual-hue 2-point vertex gradients across headers, tabs, cards, sliders & CTA buttons at 60 FPS.",
+                "60 FPS"
+            )
+        end
 
         c:StatRow({
             { Icon = "Shield", Label = "Status",  Value = "Undetected" },
-            { Icon = "Bolt",   Label = "Render",  Value = "0% FPS Drop" },
-            { Icon = "Clock",  Label = "Engine",  Value = "v5.0 Minimal" }
+            { Icon = "Bolt",   Label = "Render",  Value = "60 FPS Smooth" },
+            { Icon = "Clock",  Label = "Engine",  Value = "v5.2 Colour" }
         })
 
         local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt")
         QuickCard:ActionGrid({
-            { Icon = "AutoFarm",  Name = "Auto Farm",      Flag = "QuickAutoFarm" },
+            { Icon = "AutoFarm",  Name = "Auto Farm",      Flag = "QuickAutoFarm", Default = true },
             { Icon = "Teleports", Name = "Teleport",       Flag = "QuickTP" },
-            { Icon = "Visuals",   Name = "ESP Box",        Flag = "QuickESP" },
+            { Icon = "Visuals",   Name = "ESP Box",        Flag = "QuickESP", Default = true },
             { Icon = "Speed",     Name = "Speed Override", Flag = "QuickSpeed" },
             { Icon = "Jump",      Name = "Infinite Jump",  Flag = "QuickInfJump" },
             { Icon = "Collect",   Name = "Collect All",    Flag = "QuickCollect" }
@@ -60,21 +72,27 @@ feature("Home", "Home")({
 
         local ActivityCard = c:Card("Recent Activity", "Live Logs", "Clock")
         ActivityCard:ActivityTimeline({
-            { Text = "R&8_DV Minimalist v5.0 Initialized", Time = "Just now" },
-            { Text = "2.5D / 3D Colourful Font Active",    Time = "1m ago" },
-            { Text = "Single-Border Popup Icon Ready",     Time = "2m ago" },
-            { Text = "GitHub Master Crest Cached",         Time = "4m ago" }
+            { Text = "R&8_DV Colourful v5.2 Initialized",   Time = "Just now" },
+            { Text = "Dual-Hue 2-Point Gradients Active",   Time = "1m ago" },
+            { Text = "Single-Border Popup Icon Ready",      Time = "2m ago" },
+            { Text = "GitHub Master Crest Cached",          Time = "4m ago" }
         })
     end),
 
     -- Panel Kanan Global
     right = right(function(r)
         r:Section("Theme & Typography", "Palette")
-        r:Dropdown("Color Style", "ThemeSelect", ThemeChoices, "Minimalist Monochrome", function(selectedTheme)
+        if r.ThemeSwatches then
+            r:ThemeSwatches("Colour Palette")
+        end
+        r:Dropdown("Color Style", "ThemeSelect", ThemeChoices, "Blue Night Sky", function(selectedTheme)
             UI:SetTheme(selectedTheme)
         end)
         r:Toggle("2.5D / 3D Colourful Font", "Text3DToggle", true, function(state)
             if UI.SetText3D then UI:SetText3D(state) end
+        end)
+        r:Slider("Letter Spacing", "LetterSpacingVal", 0, 3, 1, "x", function(val)
+            if UI.SetLetterSpacing then UI:SetLetterSpacing(val) end
         end)
         r:Dropdown("Checkbox Style", "CheckboxStyleMode", {
             "Modern",
