@@ -1,24 +1,27 @@
-# R&8_DV ImGui Framework (v5.3 — Solid High-Contrast Text, Spacious Controls & Bug-Free Checklist)
+# R&8_DV ImGui Framework (v5.4 — Large Effortless Canvas Typography, High-Contrast Solid UI & Spacious Cards)
 
-Framework **R&8_DV ImGui v5.3** adalah arsitektur UI Roblox berbasis Luau dengan **100% Teks Solid Kontras Tinggi (Tanpa 2.5D / 3D Gradient Teks)** sehingga huruf tidak pernah rusak atau hilang di semua perangkat PC & Mobile, **Checklist / Switch Bebas Bug dengan Animasi Halus Natural (`Quad Out`)**, **Ukuran Tombol Besar & Tidak Kedekatan**, struktur **Card Lengkap**, serta **60 FPS Stabil**.
+Framework **R&8_DV ImGui v5.4** adalah arsitektur UI Roblox berbasis Luau dengan **Ukuran Huruf Canvas Besar & Mudah Dibaca Tanpa Mendekat ke Layar**, **100% Teks Solid Kontras Tinggi (Tanpa 2.5D / 3D Gradient Teks)**, **Checklist / Switch Bebas Bug dengan Animasi Halus Natural (`Quad Out`)**, **Layout Dropdown & Input 2-Baris Lebar Penuh Anti-Terpotong**, struktur **Card Lengkap**, serta **60 FPS Stabil**.
 
 ---
 
-## Ringkasan Perbaikan & Pembaruan (v5.3)
+## Ringkasan Perbaikan & Pembaruan (v5.4)
 
-1. **Penghapusan Total Efek Teks 2.5D / 3D (`Zero Text UIGradient`) & Kontras Otomatis**:
-   - Seluruh `UIGradient` pada `TextLabel` / `TextButton` telah **dihapus 100%** karena membuat teks pecah/hilang di shader GPU Mobile.
-   - Menggunakan sistem penjaga kontras otomatis (`GetOnFillColor` & `GetReadableTextColor`): di atas tombol/tab/badge berwarna terang (`Minimalist Monochrome`, `Orange Sand`, `Midnight Monokai`), teks & tanda centang **otomatis menggunakan warna gelap pekat (`#0C0E14`)**; sedangkan di atas permukaan gelap atau aksen biru/ungu tua (`Blue Night Sky`, `Violet Amethyst`), teks **otomatis menggunakan warna putih tajam (`#FFFFFF`)**.
-2. **Perbaikan Bug Checklist (`Checkbox` & `Modern` Switch) & Animasi Smooth Natural**:
-   - Ikon centang `Check` dibangun ulang dengan struktur sudut menyatu (`-45° Connected L-Bar`) sehingga tidak pernah terpisah atau melenceng di skala layar berapapun.
-   - Menghilangkan *motion* aneh (tanpa loncatan ketebalan font, tanpa efek membal/mengecil ekstrem ke `0`) dan menggantinya dengan transisi halus natural **`0.14s Quad Out`**.
-   - Switch pada header `Card` maupun baris `Toggle` kini tersinkronisasi penuh dengan pilihan `"Modern"` maupun `"Checkbox"`.
-3. **Perbaikan Tombol Kecil, Tombol Mepet, Tombol Kedekatan & Penambahan Card**:
-   - **TopBar (`54px`)**: Tombol `Menu`, `Minimize`, `Maximize`, dan `Close` diperbesar menjadi **`36 x 36 px`** dengan jarak antar tombol **`10px`** dan margin kanan **`16px`**.
-   - **Kontrol di Dalam Card**: Setiap `Toggle`, `Slider`, `Dropdown`, `Stepper`, `Input`, dan `Keybind` memiliki tinggi baris **`42px – 58px`** dengan *padding* dalam **`14px`**, jarak antar kontrol **`12px`**, serta opsi `Dropdown` setinggi **`34px`** berjarak **`6px`**.
-   - **Card Lengkap**: Seluruh pengaturan pada panel kanan maupun setiap tab (`Home`, `Combat`, `Auto Farm`, `Visuals`, `Player`, `Misc`) kini terbungkus rapi di dalam **Card** dengan *padding* `20px` tanpa desain poster/ilustrasi aneh.
+1. **Ukuran Huruf Canvas Layout Diperbesar Secara Signifikan & Skala Layar Optimal**:
+   - **Skala Jendela Responsif (`ComputeTargetScale`)**: Rasio fit layar Mobile & PC ditingkatkan hingga **`92% x 90%`** pada basis kanvas **`1040 x 520`**, menaikkan skala efektif di layar HP sekitar **`+20%`** secara otomatis tanpa terpotong di tepi layar.
+   - **Tipografi Canvas Besar & Jelas**:
+     - Judul `Header`: **`26px`** (`GothamBlack`) + Subjudul **`15px`** + Badge **`13px`**.
+     - Judul `Card`: **`20px`** (`GothamBlack`) + Subjudul **`15px`** (`TextWrapped` otomatis).
+     - Judul `FeatureCard`: **`19px`** (`GothamBlack`) + Deskripsi **`15px`** + Status Pill **`13px`**.
+     - Nilai `StatRow`: **`20px`** (`GothamBlack`, lebar penuh 2-tingkat) + Label **`13px`**.
+     - Seluruh Kontrol (`Toggle`, `Slider`, `Stepper`, `Dropdown`, `Input`, `Keybind`, `Button`) & Tab Sidebar: **`17px`**!
+     - Nilai `Slider` Badge, Opsi & Pilihan `Dropdown`, `InputBox`, `Keybind`, `ActionGrid`, dan `ActivityTimeline`: **`15px`**.
+   - **Layout 2-Baris Lebar Penuh untuk `Dropdown` & `Input` (`78px`)**: Label `17px` berada di baris atas dan kotak pilihan/input `15px` memakai **100% lebar penuh di baris bawah**, sehingga teks panjang seperti `"Minimalist Monochrome"` atau `"Closest to Crosshair"` terbaca utuh tanpa terpotong (`...`) di Panel Kanan maupun Tengah.
+2. **100% Teks Solid Kontras Tinggi (`Zero Text UIGradient`)**:
+   - Seluruh `UIGradient` pada teks dihapus permanen dan dijaga oleh `GetOnFillColor` + `GetReadableTextColor` agar teks selalu tajam baik di atas aksen terang maupun gelap.
+3. **Checklist (`Checkbox` `28x28` & `Modern` `50x26`) Bebas Bug & Animasi Smooth (`0.14s Quad Out`)**:
+   - Ikon centang `-45° Connected L-Bar` menyatu presisi pada skala layar berapapun.
 4. **Popup Icon Single-Border & Link GitHub RAW Tetap Utuh**:
-   - Popup Icon Menu (`R8DV_FloatingSquircle`) tetap memakai **1 border tunggal**, dan seluruh URL **GitHub RAW** dipertahankan tanpa perubahan.
+   - Popup Icon Menu (`R8DV_FloatingSquircle`) tetap memakai **1 border tunggal**, dan seluruh URL **GitHub RAW** dipertahankan 100% tanpa perubahan.
 
 ---
 
@@ -112,7 +115,7 @@ UI.feature("Combat", "Combat")({
 
 ## Struktur File
 
-- [`r&8_dv.lua`](r&8_dv.lua) — Core engine **R&8_DV ImGui v5.3** (100% Solid High-Contrast Text, Bug-Free Checklist, Spacious Controls, Single-Border Popup Icon, 60 FPS Smooth).
+- [`r&8_dv.lua`](r&8_dv.lua) — Core engine **R&8_DV ImGui v5.4** (Large Effortless Canvas Text, 100% Solid High-Contrast Typography, Bug-Free Checklist, Single-Border Popup Icon, 60 FPS Smooth).
 - [`Sample Gui/SampleGui.lua`](Sample%20Gui/SampleGui.lua) — Implementasi contoh lengkap dengan Card terstruktur di semua panel & tab.
 - [`Assets/icons.png`](Assets/icons.png) — Master emblem resmi R&8_DV via GitHub RAW.
 - [`Assets/Jersey25-Regular.ttf`](Assets/Jersey25-Regular.ttf) — Aset font repositori.

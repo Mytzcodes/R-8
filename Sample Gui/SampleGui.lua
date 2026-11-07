@@ -12,7 +12,7 @@ assert(okFetch and type(rawScript) == "string" and #rawScript > 128, "[R&8_DV] H
 
 local ImGui = loadstring(rawScript)()
 
--- 2. Inisialisasi Jendela R&8_DV (Teks Solid Tajam Anti-Rusak, Tombol Lega & Smooth 60 FPS)
+-- 2. Inisialisasi Jendela R&8_DV (Ukuran Huruf Canvas Besar, Teks Solid Tajam & Smooth 60 FPS)
 local UI = ImGui({
     Title = "DRY CURSED - IMGUI",
     BrandTitle = "R&8_DV",            -- Judul utama solid & tegas di bawah logo sidebar
@@ -46,8 +46,8 @@ feature("Home", "Home")({
 
         c:StatRow({
             { Icon = "Shield", Label = "Status",  Value = "Undetected" },
-            { Icon = "Bolt",   Label = "Render",  Value = "60 FPS Smooth" },
-            { Icon = "Clock",  Label = "Version", Value = "v5.3 Stable" }
+            { Icon = "Bolt",   Label = "Render",  Value = "60 FPS" },
+            { Icon = "Clock",  Label = "Version", Value = "v5.4 Stable" }
         })
 
         local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt", {
@@ -74,7 +74,7 @@ feature("Home", "Home")({
             Subtitle = "Latest framework and module events"
         })
         ActivityCard:ActivityTimeline({
-            { Text = "R&8_DV v5.3 Solid UI Initialized",   Time = "Just now" },
+            { Text = "R&8_DV v5.4 Large Text UI Ready",     Time = "Just now" },
             { Text = "High-Contrast Text Guard Verified",  Time = "1m ago" },
             { Text = "Single-Border Popup Icon Ready",     Time = "2m ago" },
             { Text = "GitHub Master Crest Cached",         Time = "4m ago" }
