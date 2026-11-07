@@ -14,6 +14,7 @@ local CoreGui = game:GetService("CoreGui")
 local UIS = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local function cap(n) return getgenv()[n] or (getfenv and getfenv()[n]) end
 local F = {
@@ -340,25 +341,35 @@ function S.Filter(q, dirF)
 end
 
 -- Save packets: decoded successfully -> .txt ; failed decrypt -> .enc (raw kept)
-function S.SavePackets(list, cb)
+function S.SavePackets(list, cb, progCb)
     list = list or S.Packets
     local snapshot = {table.unpack(list)}
+    local notifyProg = progCb or S.OnProgress
     task.spawn(function()
+        local total = math.max(#snapshot, 1)
+        if notifyProg then notifyProg(5, ("Formatting %d packets..."):format(#snapshot)) end
         local dec, enc = {}, {}
         for i, pk in ipairs(snapshot) do
             local bad = false
             for _, p in ipairs(pk.args) do if p.how == "encrypted" then bad = true end end
             local t = S.PacketText(pk)
             if bad then enc[#enc + 1] = t else dec[#dec + 1] = t end
-            if i % 100 == 0 then task.wait() end
+            if i % 50 == 0 or i == #snapshot then
+                local pct = math.floor(10 + (i / total) * 70)
+                if notifyProg then notifyProg(pct, ("Formatting packets (%d/%d)..."):format(i, #snapshot)) end
+                task.wait()
+            end
         end
         local stamp = os.date("%Y%m%d_%H%M%S")
         local sep = "\n" .. ("-"):rep(40) .. "\n"
         local msg = {}
+        if notifyProg then notifyProg(88, "Writing packet files to workspace...") end
         if #dec > 0 then S.write("Packets/packets_" .. stamp .. ".txt", table.concat(dec, sep), function(_, p) msg[#msg + 1] = p end) end
         if #enc > 0 then S.write("Packets/packets_" .. stamp .. ".enc", table.concat(enc, sep), function(_, p) msg[#msg + 1] = p end) end
         task.wait(0.3)
-        if cb then cb(("Saved %d ok, %d encrypted | %s"):format(#dec, #enc, table.concat(msg, ", "))) end
+        local doneTxt = ("Saved %d ok, %d encrypted | %s"):format(#dec, #enc, table.concat(msg, ", "))
+        if notifyProg then notifyProg(100, doneTxt) end
+        if cb then cb(doneTxt) end
     end)
 end
 
@@ -398,10 +409,13 @@ function S.Source(inst)
 end
 
 -- Save scripts into 3 separate folders: Roblox / Game / Custom
-function S.SaveScripts(list, cb)
+function S.SaveScripts(list, cb, progCb)
     list = list or S.Scripts
     local snap = {table.unpack(list)}
+    local notifyProg = progCb or S.OnProgress
     task.spawn(function()
+        local total = math.max(#snap, 1)
+        if notifyProg then notifyProg(2, ("Saving scripts (0/%d)..."):format(#snap)) end
         local okc, failc, folders = 0, 0, {}
         for i, s in ipairs(snap) do
             local src, how = S.Source(s.inst)
@@ -418,12 +432,18 @@ function S.SaveScripts(list, cb)
                 S.write(sub .. "/" .. base .. ".enc", "-- " .. s.path .. "\n-- decompile failed: kept as encrypted placeholder")
             end
             folders[sub] = true
-            if i % 15 == 0 then task.wait() end
+            local pct = math.floor(5 + (i / total) * 90)
+            if i % 5 == 0 or i == #snap then
+                if notifyProg then notifyProg(pct, ("Saving scripts (%d/%d) — %s"):format(i, #snap, s.name)) end
+            end
+            if i % 12 == 0 then task.wait() end
         end
         task.wait(0.3)
         local fl = {}
         for k in pairs(folders) do fl[#fl + 1] = ROOT .. "/" .. k end
-        if cb then cb(("Scripts ok=%d failed(.enc)=%d | %s"):format(okc, failc, table.concat(fl, ", "))) end
+        local doneTxt = ("Scripts ok=%d failed(.enc)=%d | %s"):format(okc, failc, table.concat(fl, ", "))
+        if notifyProg then notifyProg(100, doneTxt) end
+        if cb then cb(doneTxt) end
     end)
 end
 
@@ -482,11 +502,12 @@ local function crc32(s)
     end
     return bit32.bxor(c, 0xFFFFFFFF)
 end
-function S.BuildZip(files)
+function S.BuildZip(files, onZipProg)
     local out, central, offset = {}, {}, 0
     local dt = os.date("*t")
     local dosTime = bit32.bor(bit32.lshift(dt.hour, 11), bit32.lshift(dt.min, 5), math.floor(dt.sec / 2))
     local dosDate = bit32.bor(bit32.lshift(math.max(dt.year - 1980, 0), 9), bit32.lshift(dt.month, 5), dt.day)
+    local total = math.max(#files, 1)
     for i, f in ipairs(files) do
         local name, data = f.name, f.data
         local crc, size = crc32(data), #data
@@ -494,7 +515,10 @@ function S.BuildZip(files)
         out[#out + 1] = lh out[#out + 1] = name out[#out + 1] = data
         central[#central + 1] = string.pack("<I4I2I2I2I2I2I2I4I4I4I2I2I2I2I2I4I4", 0x02014b50, 20, 20, 0x0800, 0, dosTime, dosDate, crc, size, size, #name, 0, 0, 0, 0, 0, offset) .. name
         offset += #lh + #name + size
-        if i % 20 == 0 then task.wait() end
+        if i % 15 == 0 or i == #files then
+            if onZipProg then onZipProg(i, total) end
+            task.wait()
+        end
     end
     local cd = table.concat(central)
     out[#out + 1] = cd
@@ -503,20 +527,31 @@ function S.BuildZip(files)
 end
 
 -- Export EVERYTHING (all packets + all scripts + all assets) into one folder structure, zipped.
-function S.ExportAll(cb)
+function S.ExportAll(cb, progCb)
+    local notifyProg = progCb or S.OnProgress
     task.spawn(function()
         local ok, err = pcall(function()
+            local function step(pct, msg)
+                if notifyProg then notifyProg(pct, msg) end
+                if cb then cb(msg) end
+            end
+
             local files, stamp = {}, os.date("%Y%m%d_%H%M%S")
             local function add(n, d) files[#files + 1] = {name = n, data = d} end
             local stats = {pk = 0, pkEnc = 0, sc = 0, scEnc = 0, scBad = 0, assets = 0}
-            if cb then cb("1/4 Exporting packets...") end
+            step(2, "1/4 Exporting packets...")
             local dec, enc = {}, {}
             local sep = "\n" .. ("-"):rep(40) .. "\n"
-            for i, pk in ipairs({table.unpack(S.Packets)}) do
+            local pkSnap = {table.unpack(S.Packets)}
+            local pkTotal = math.max(#pkSnap, 1)
+            for i, pk in ipairs(pkSnap) do
                 local bad = false
                 for _, p in ipairs(pk.args) do if p.how == "encrypted" then bad = true end end
                 if bad then enc[#enc + 1] = S.PacketText(pk) else dec[#dec + 1] = S.PacketText(pk) end
-                if i % 100 == 0 then task.wait() end
+                if i % 100 == 0 then
+                    step(math.floor(2 + (i / pkTotal) * 10), ("1/4 Exporting packets (%d/%d)..."):format(i, #pkSnap))
+                    task.wait()
+                end
             end
             stats.pk, stats.pkEnc = #dec, #enc
             if #dec > 0 then add("Packets/packets.txt", table.concat(dec, sep)) end
@@ -524,9 +559,11 @@ function S.ExportAll(cb)
             local rl = {}
             for _, r in ipairs(S.ScanRemotes()) do rl[#rl + 1] = r.ClassName .. "  " .. fullName(r) end
             add("Packets/remote_list.txt", table.concat(rl, "\n"))
+            step(15, ("1/4 Packets & %d remotes indexed"):format(#rl))
 
-            if cb then cb("2/4 Decompiling & exporting scripts...") end
             local list = S.ScanScripts()
+            local totalSc = #list
+            step(16, ("2/4 Decompiling & exporting scripts (0/%d)..."):format(totalSc))
             local dirs = {Roblox = "Scripts_Roblox", Game = "Scripts_GameMap", Custom = "Scripts_Custom"}
             for i, s in ipairs(list) do
                 local src, how = S.Source(s.inst)
@@ -541,21 +578,31 @@ function S.ExportAll(cb)
                 else
                     add(base .. ".enc", "-- " .. s.path .. "\n-- decompile failed") stats.scEnc += 1
                 end
-                if i % 15 == 0 then task.wait() end
+                local pct = math.floor(16 + (i / math.max(totalSc, 1)) * 58)
+                if i % 5 == 0 or i == totalSc then
+                    step(pct, ("2/4 Decompiling & exporting scripts (%d/%d)..."):format(i, totalSc))
+                end
+                if i % 15 == 0 or i == totalSc then
+                    task.wait()
+                end
             end
 
-            if cb then cb("3/4 Scanning & exporting assets...") end
+            step(76, "3/4 Scanning & exporting assets...")
             local ao = {}
             for _, a in ipairs(S.ScanAssets()) do ao[#ao + 1] = a.info .. " @ " .. a.path end
             stats.assets = #ao
             add("Assets/assets.txt", table.concat(ao, "\n"))
             add("README.txt", ("R&8_DV Debugger export %s\nPackets ok=%d encrypted=%d\nScripts ok=%d (compile-fail=%d) encrypted/failed=%d\nAssets=%d\nFolders: Scripts_Roblox (bawaan), Scripts_GameMap (map game), Scripts_Custom (nil/buatan)\n"):format(stamp, stats.pk, stats.pkEnc, stats.sc, stats.scBad, stats.scEnc, stats.assets))
+            step(85, ("3/4 Assets exported (%d entries)"):format(#ao))
 
-            if cb then cb("4/4 Zipping " .. #files .. " files...") end
+            step(86, "4/4 Zipping " .. #files .. " files...")
             assert(F.writefile, "writefile unsupported")
             ensure(ROOT)
             local path = ROOT .. "/Export_" .. stamp .. ".zip"
-            local zip = S.BuildZip(files)
+            local zip = S.BuildZip(files, function(doneFiles, totalFiles)
+                local zPct = math.floor(86 + (doneFiles / totalFiles) * 12)
+                step(zPct, ("4/4 Zipping archive (%d/%d files)..."):format(doneFiles, totalFiles))
+            end)
             local wok, werr = pcall(F.writefile, path, zip)
             if not wok then
                 for _, f in ipairs(files) do
@@ -567,9 +614,14 @@ function S.ExportAll(cb)
                 path = ROOT .. "/Export_" .. stamp .. "/ (zip fallback: " .. tostring(werr) .. ")"
             end
             S.Saved[#S.Saved + 1] = path
-            if cb then cb(("DONE %s | %d files (%.1f KB) | pk=%d/%d sc=%d/%d"):format(path, #files, #zip / 1024, stats.pk, stats.pkEnc, stats.sc, stats.scEnc)) end
+            local finalMsg = ("DONE %s | %d files (%.1f KB) | pk=%d/%d sc=%d/%d"):format(path, #files, #zip / 1024, stats.pk, stats.pkEnc, stats.sc, stats.scEnc)
+            step(100, finalMsg)
         end)
-        if not ok and cb then cb("Export error: " .. tostring(err)) end
+        if not ok then
+            local errMsg = "Export error: " .. tostring(err)
+            if notifyProg then notifyProg(0, errMsg) end
+            if cb then cb(errMsg) end
+        end
     end)
 end
 
@@ -751,6 +803,294 @@ local function say(msg)
         end
     end
     RefreshDashboardStats()
+end
+
+local ProgressBars = {}
+local CurrentExportPct = 0
+local CurrentExportStage = "Idle — Ready to Export"
+
+local SMOOTH_BAR_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SMOOTH_BTN_TWEEN = TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function SetExportProgress(pct, stageText)
+    CurrentExportPct = math.clamp(math.floor((tonumber(pct) or 0) + 0.5), 0, 100)
+    if stageText and stageText ~= "" then
+        CurrentExportStage = tostring(stageText):gsub("\n", " | ")
+    end
+    local onAcc = GetOnFillColor(ActiveTheme.Accent)
+    local isBusyOrDone = (CurrentExportPct > 0)
+    for _, bar in ipairs(ProgressBars) do
+        if bar.Holder and bar.Holder.Parent then
+            bar.StageLbl.Text = CurrentExportStage
+            bar.PctTxt.Text = tostring(CurrentExportPct) .. "%"
+            bar.PctPill.BackgroundColor3 = isBusyOrDone and ActiveTheme.Accent or ActiveTheme.ControlBg
+            bar.PctTxt.TextColor3 = isBusyOrDone and onAcc or ActiveTheme.TextAccent
+            bar.Stroke.Color = (CurrentExportPct > 0 and CurrentExportPct < 100) and ActiveTheme.Accent or (bar.Hovered and ActiveTheme.HoverStroke or ActiveTheme.Stroke)
+            bar.Stroke.Transparency = (CurrentExportPct > 0 and CurrentExportPct < 100) and 0.05 or (bar.Hovered and 0.08 or 0.28)
+            if UI.ReduceEffects then
+                bar.Fill.Size = UDim2.new(CurrentExportPct / 100, 0, 1, 0)
+            else
+                TweenService:Create(bar.Fill, SMOOTH_BAR_TWEEN, {
+                    Size = UDim2.new(CurrentExportPct / 100, 0, 1, 0)
+                }):Play()
+            end
+        end
+    end
+end
+S.OnProgress = SetExportProgress
+
+local function AttachExportProgressBar(cardFrame, initialStageText)
+    local Holder = Instance.new("TextButton")
+    Holder.Size = UDim2.new(1, 0, 0, 68)
+    Holder.BorderSizePixel = 0
+    Holder.Text = ""
+    Holder.AutoButtonColor = false
+    Holder.Parent = cardFrame
+
+    local HScale = Instance.new("UIScale")
+    HScale.Scale = 1
+    HScale.Parent = Holder
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, UI.Rounded and 10 or 0)
+    Corner.Parent = Holder
+    RegisterCanvasRadius(Corner, 10)
+
+    local Stroke = Instance.new("UIStroke")
+    Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    Stroke.Thickness = 1
+    Stroke.Transparency = 0.28
+    Stroke.Parent = Holder
+
+    local Pad = Instance.new("UIPadding")
+    Pad.PaddingTop = UDim.new(0, 10)
+    Pad.PaddingBottom = UDim.new(0, 10)
+    Pad.PaddingLeft = UDim.new(0, 14)
+    Pad.PaddingRight = UDim.new(0, 14)
+    Pad.Parent = Holder
+
+    local StageLbl = Instance.new("TextLabel")
+    StageLbl.Position = UDim2.new(0, 0, 0, 0)
+    StageLbl.Size = UDim2.new(1, -78, 0, 24)
+    StageLbl.BackgroundTransparency = 1
+    StageLbl.Font = Enum.Font.GothamBold
+    StageLbl.TextSize = 14
+    StageLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    StageLbl.TextXAlignment = Enum.TextXAlignment.Left
+    StageLbl.Text = initialStageText or CurrentExportStage
+    StageLbl.Parent = Holder
+
+    local PctPill = Instance.new("Frame")
+    PctPill.AutomaticSize = Enum.AutomaticSize.X
+    PctPill.Size = UDim2.fromOffset(0, 24)
+    PctPill.Position = UDim2.new(1, 0, 0, 0)
+    PctPill.AnchorPoint = Vector2.new(1, 0)
+    PctPill.BorderSizePixel = 0
+    PctPill.Parent = Holder
+
+    local PillCorner = Instance.new("UICorner")
+    PillCorner.CornerRadius = UDim.new(0, UI.Rounded and 7 or 0)
+    PillCorner.Parent = PctPill
+    RegisterCanvasRadius(PillCorner, 7)
+
+    local PillPad = Instance.new("UIPadding")
+    PillPad.PaddingLeft = UDim.new(0, 10)
+    PillPad.PaddingRight = UDim.new(0, 10)
+    PillPad.Parent = PctPill
+
+    local PctTxt = Instance.new("TextLabel")
+    PctTxt.AutomaticSize = Enum.AutomaticSize.X
+    PctTxt.Size = UDim2.new(0, 0, 1, 0)
+    PctTxt.BackgroundTransparency = 1
+    PctTxt.Font = Enum.Font.GothamBlack
+    PctTxt.TextSize = 13
+    PctTxt.Text = tostring(CurrentExportPct) .. "%"
+    PctTxt.Parent = PctPill
+
+    local Track = Instance.new("Frame")
+    Track.Position = UDim2.new(0, 0, 0, 34)
+    Track.Size = UDim2.new(1, 0, 0, 11)
+    Track.BorderSizePixel = 0
+    Track.ClipsDescendants = true
+    Track.Parent = Holder
+
+    local TrackCorner = Instance.new("UICorner")
+    TrackCorner.CornerRadius = UDim.new(0, UI.Rounded and 6 or 0)
+    TrackCorner.Parent = Track
+    RegisterCanvasRadius(TrackCorner, 6)
+
+    local Fill = Instance.new("Frame")
+    Fill.Size = UDim2.new(CurrentExportPct / 100, 0, 1, 0)
+    Fill.BorderSizePixel = 0
+    Fill.Parent = Track
+
+    local FillCorner = Instance.new("UICorner")
+    FillCorner.CornerRadius = UDim.new(0, UI.Rounded and 6 or 0)
+    FillCorner.Parent = Fill
+    RegisterCanvasRadius(FillCorner, 6)
+
+    local barEntry = {
+        Holder = Holder,
+        Stroke = Stroke,
+        StageLbl = StageLbl,
+        PctPill = PctPill,
+        PctTxt = PctTxt,
+        Track = Track,
+        Fill = Fill,
+        Hovered = false
+    }
+    table.insert(ProgressBars, barEntry)
+
+    local function SyncBarTheme(theme)
+        local onAcc = GetOnFillColor(theme.Accent)
+        local isBusyOrDone = (CurrentExportPct > 0)
+        Holder.BackgroundColor3 = barEntry.Hovered and theme.CardHoverBg or theme.RowBg
+        Stroke.Color = (CurrentExportPct > 0 and CurrentExportPct < 100) and theme.Accent or (barEntry.Hovered and theme.HoverStroke or theme.Stroke)
+        Stroke.Transparency = (CurrentExportPct > 0 and CurrentExportPct < 100) and 0.05 or (barEntry.Hovered and 0.08 or 0.28)
+        StageLbl.TextColor3 = theme.TextPrimary
+        Track.BackgroundColor3 = theme.ControlBg
+        Fill.BackgroundColor3 = theme.Accent
+        PctPill.BackgroundColor3 = isBusyOrDone and theme.Accent or theme.ControlBg
+        PctTxt.TextColor3 = isBusyOrDone and onAcc or theme.TextAccent
+    end
+
+    RegisterCanvasTheme(Holder, SyncBarTheme)
+
+    if UIS.MouseEnabled then
+        Holder.MouseEnter:Connect(function()
+            barEntry.Hovered = true
+            SyncBarTheme(ActiveTheme)
+        end)
+        Holder.MouseLeave:Connect(function()
+            barEntry.Hovered = false
+            HScale.Scale = 1
+            SyncBarTheme(ActiveTheme)
+        end)
+    end
+
+    Holder.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            TweenService:Create(HScale, SMOOTH_BTN_TWEEN, {Scale = 0.98}):Play()
+        end
+    end)
+    Holder.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            TweenService:Create(HScale, SMOOTH_BTN_TWEEN, {Scale = 1}):Play()
+        end
+    end)
+    Holder.MouseButton1Click:Connect(function()
+        local lastSaved = S.Saved[#S.Saved]
+        if lastSaved and F.setclip then
+            F.setclip(lastSaved)
+            say(("Progress %d%% — Copied latest export path: %s"):format(CurrentExportPct, lastSaved))
+        else
+            say(("Export progress: %d%% (%s)"):format(CurrentExportPct, CurrentExportStage))
+        end
+    end)
+
+    return barEntry
+end
+
+-- Hover + Click Press Visual Feedback untuk semua Action Button di dalam Card
+local EnhancedButtons = setmetatable({}, {__mode = "k"})
+local function EnhanceCardButtons(cardFrame)
+    if not cardFrame then return end
+    for _, child in ipairs(cardFrame:GetChildren()) do
+        if child:IsA("TextButton") and child.Size.Y.Offset == 48 and not EnhancedButtons[child] then
+            EnhancedButtons[child] = true
+            local btnScale = child:FindFirstChildOfClass("UIScale")
+            if not btnScale then
+                btnScale = Instance.new("UIScale")
+                btnScale.Scale = 1
+                btnScale.Parent = child
+            end
+            local btnStroke = child:FindFirstChildOfClass("UIStroke")
+            local mainLbl = child:FindFirstChildOfClass("TextLabel")
+            local badgePill = child:FindFirstChildOfClass("Frame")
+            for _, sub in ipairs(child:GetChildren()) do
+                if sub:IsA("Frame") and sub.AnchorPoint.X == 1 then
+                    badgePill = sub
+                    break
+                end
+            end
+            local badgeTxt = badgePill and badgePill:FindFirstChildOfClass("TextLabel")
+            local origBadge = badgeTxt and badgeTxt.Text or ""
+            local hovered, pressed = false, false
+            local clickSeq = 0
+
+            local function ApplyState()
+                local onAcc = GetOnFillColor(ActiveTheme.Accent)
+                local bg = pressed and ActiveTheme.ControlBg or (hovered and ActiveTheme.CardHoverBg or ActiveTheme.Accent)
+                local fg = (pressed or hovered) and ActiveTheme.TextPrimary or onAcc
+                TweenService:Create(child, SMOOTH_BTN_TWEEN, {BackgroundColor3 = bg, BackgroundTransparency = 0}):Play()
+                TweenService:Create(btnScale, SMOOTH_BTN_TWEEN, {Scale = pressed and 0.97 or (hovered and 1.01 or 1)}):Play()
+                if mainLbl then mainLbl.TextColor3 = fg end
+                if btnStroke then
+                    btnStroke.Thickness = (pressed or hovered) and 1.8 or 1
+                    btnStroke.Color = pressed and ActiveTheme.TextPrimary or ActiveTheme.Accent
+                    btnStroke.Transparency = (pressed or hovered) and 0 or 0.16
+                end
+                if badgePill and badgeTxt then
+                    if pressed or hovered then
+                        badgePill.BackgroundColor3 = ActiveTheme.Accent
+                        badgePill.BackgroundTransparency = 0
+                        badgeTxt.TextColor3 = onAcc
+                    else
+                        badgePill.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+                        badgePill.BackgroundTransparency = 0.18
+                        badgeTxt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    end
+                end
+            end
+
+            if UIS.MouseEnabled then
+                child.MouseEnter:Connect(function()
+                    hovered = true
+                    ApplyState()
+                end)
+                child.MouseLeave:Connect(function()
+                    hovered = false
+                    pressed = false
+                    ApplyState()
+                end)
+            end
+
+            child.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    pressed = true
+                    ApplyState()
+                end
+            end)
+            child.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    if pressed then
+                        pressed = false
+                        ApplyState()
+                    end
+                end
+            end)
+            child.MouseButton1Click:Connect(function()
+                clickSeq += 1
+                local mySeq = clickSeq
+                pressed = true
+                ApplyState()
+                if badgeTxt and origBadge ~= "" then
+                    badgeTxt.Text = "OK ✓"
+                end
+                task.delay(0.13, function()
+                    if child and child.Parent then
+                        pressed = false
+                        ApplyState()
+                    end
+                end)
+                task.delay(0.60, function()
+                    if badgeTxt and badgeTxt.Parent and clickSeq == mySeq and origBadge ~= "" then
+                        badgeTxt.Text = origBadge
+                    end
+                end)
+            end)
+        end
+    end
 end
 
 local function AttachStatusBanner(cardFrame, defaultText)
@@ -951,6 +1291,10 @@ local function AttachSelectList(cardFrame, heightPx, emptyText)
             Title.Text = tostring(getLabel(item) or "")
             Title.Parent = Btn
 
+            local rScale = Instance.new("UIScale")
+            rScale.Scale = 1
+            rScale.Parent = Btn
+
             local entry = {
                 Btn = Btn,
                 Corner = rCorner,
@@ -974,9 +1318,21 @@ local function AttachSelectList(cardFrame, heightPx, emptyText)
                 end)
                 Btn.MouseLeave:Connect(function()
                     entry.Hovered = false
+                    rScale.Scale = 1
                     ApplyRowTheme(entry, ActiveTheme)
                 end)
             end
+
+            Btn.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    TweenService:Create(rScale, SMOOTH_BTN_TWEEN, {Scale = 0.985}):Play()
+                end
+            end)
+            Btn.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    TweenService:Create(rScale, SMOOTH_BTN_TWEEN, {Scale = 1}):Play()
+                end
+            end)
 
             Btn.MouseButton1Click:Connect(function()
                 if onSelect then onSelect(item) end
@@ -1155,6 +1511,9 @@ feature("Home", "Home")({
         local QuickCard = c:Card("Quick Debugger Controls", "Archive", "Bolt", {
             Subtitle = "Export complete game dump (.zip) or toggle packet capture"
         })
+        local quickFrame = GetLastFrame(CurrentCenterPage())
+        AttachExportProgressBar(quickFrame, "Idle — Click Export ALL to build .zip")
+
         QuickCard:Toggle("Pause Packet Capture", "HomePauseSpy", S.Paused, function(val)
             SetSpyPaused(val)
         end)
@@ -1162,14 +1521,16 @@ feature("Home", "Home")({
             SetIncludeExec(val)
         end)
         QuickCard:Button("Export ALL to ZIP Archive", "ZIP ALL", "Collect", function()
+            SetExportProgress(1, "Starting full ZIP export...")
             say("Starting full ZIP export...")
-            S.ExportAll(say)
+            S.ExportAll(say, SetExportProgress)
         end)
         QuickCard:Button("Rescan All Game Remotes", "RESCAN", "Target", function()
             local rList = S.ScanRemotes()
             RemoteCountCache = #rList
             say("Scanned & watching " .. tostring(#rList) .. " remotes")
         end)
+        EnhanceCardButtons(quickFrame)
 
         local ActivityCard = c:Card("Recent Debugger Events", "Live Logs", "Clock", {
             Subtitle = "Live status stream & workspace export notifications"
@@ -1301,18 +1662,22 @@ feature("Target", "Packets")({
             S.Blocked[curPk.remote] = true
             say("Blocked remote: " .. tostring(curPk.name))
         end)
+        EnhanceCardButtons(inspectFrame)
 
         local ManageCard = r:Card("Save & Maintenance", nil, "Collect", {
             Subtitle = "Export decoded (.txt) & encrypted (.enc) packet logs"
         })
+        local manageFrame = GetLastFrame(CurrentRightPage())
+        AttachExportProgressBar(manageFrame, "Ready to save packet logs")
+
         ManageCard:Button("Save Filtered Packets", "SHOWN", "Check", function()
             say("Saving filtered packets...")
             local filtered = S.Filter(UI:GetValue("PkSearch") or "", UI:GetValue("PkDir") or "ALL")
-            S.SavePackets(filtered, say)
+            S.SavePackets(filtered, say, SetExportProgress)
         end)
         ManageCard:Button("Save All Packets", "SAVE ALL", "Collect", function()
             say("Saving all packets...")
-            S.SavePackets(nil, say)
+            S.SavePackets(nil, say, SetExportProgress)
         end)
         ManageCard:Button("Clear Captured Packets", "CLEAR", "Minimize", function()
             S.Packets = {}
@@ -1327,6 +1692,7 @@ feature("Target", "Packets")({
             RemoteCountCache = #list
             say("Unblocked all & watching " .. tostring(#list) .. " remotes")
         end)
+        EnhanceCardButtons(manageFrame)
     end)
 })
 
@@ -1413,6 +1779,7 @@ feature("Layers", "Scripts")({
             S.refreshS()
             say("Found " .. tostring(#S.Scripts) .. " scripts")
         end)
+        EnhanceCardButtons(scFilterFrame)
     end),
 
     right = right(function(r)
@@ -1421,7 +1788,8 @@ feature("Layers", "Scripts")({
         })
         local decompFrame = GetLastFrame(CurrentRightPage())
         AttachStatusBanner(decompFrame, "Select a script to decompile")
-        ScriptViewerUI = AttachCodeViewer(decompFrame, 225, "Click any LocalScript or ModuleScript on the left to decompile...")
+        AttachExportProgressBar(decompFrame, "Ready to decompile & save scripts")
+        ScriptViewerUI = AttachCodeViewer(decompFrame, 195, "Click any LocalScript or ModuleScript on the left to decompile...")
 
         DecompCard:Button("Copy Source to Clipboard", "COPY", "Check", function()
             local txt = ScriptViewerUI and ScriptViewerUI:GetText() or ""
@@ -1436,14 +1804,15 @@ feature("Layers", "Scripts")({
         DecompCard:Button("Save Selected Script", "SAVE 1", "Layers", function()
             if not curS then say("Select a script first") return end
             say("Saving " .. curS.name .. "...")
-            S.SaveScripts({curS}, say)
+            S.SaveScripts({curS}, say, SetExportProgress)
         end)
         DecompCard:Button("Save All Shown Scripts", "SAVE ALL", "Collect", function()
             local list = GetShownScripts()
             if #list == 0 then say("No scripts match current filter") return end
             say("Saving " .. tostring(#list) .. " scripts to Roblox/GameMap/Custom folders...")
-            S.SaveScripts(list, say)
+            S.SaveScripts(list, say, SetExportProgress)
         end)
+        EnhanceCardButtons(decompFrame)
     end)
 })
 
@@ -1516,12 +1885,16 @@ feature("Visuals", "Assets")({
         end)
         AsFilterCard:Button("Scan Game Assets & Values", "SCAN", "Visuals", function()
             say("Scanning game instances & attributes...")
+            SetExportProgress(35, "Scanning game assets & attributes...")
             task.spawn(function()
                 ScannedAssets = S.ScanAssets()
                 RefreshAssetsUI()
-                say("Indexed " .. tostring(#ScannedAssets) .. " asset/data entries")
+                local msg = "Indexed " .. tostring(#ScannedAssets) .. " asset/data entries"
+                SetExportProgress(100, msg)
+                say(msg)
             end)
         end)
+        EnhanceCardButtons(asFilterFrame)
     end),
 
     right = right(function(r)
@@ -1530,7 +1903,8 @@ feature("Visuals", "Assets")({
         })
         local asDetailFrame = GetLastFrame(CurrentRightPage())
         AttachStatusBanner(asDetailFrame, "Ready to scan assets & data")
-        AssetViewerUI = AttachCodeViewer(asDetailFrame, 210, "Click any scanned entry on the left to inspect & auto-copy...")
+        AttachExportProgressBar(asDetailFrame, "Ready to scan & export assets")
+        AssetViewerUI = AttachCodeViewer(asDetailFrame, 185, "Click any scanned entry on the left to inspect & auto-copy...")
 
         AsDetailCard:Button("Copy Selected Entry", "COPY", "Check", function()
             if not curAsset then say("Select an entry first") return end
@@ -1544,14 +1918,19 @@ feature("Visuals", "Assets")({
         AsDetailCard:Button("Save Shown Entries (.txt)", "SAVE", "Collect", function()
             local shown = GetShownAssets()
             if #shown == 0 then say("No asset entries to save — run Scan first") return end
+            SetExportProgress(25, "Formatting " .. tostring(#shown) .. " asset entries...")
             local lines = {}
             for _, a in ipairs(shown) do
                 lines[#lines + 1] = a.info .. " @ " .. a.path
             end
+            SetExportProgress(75, "Writing asset entries to workspace...")
             S.write("Assets/assets_" .. os.date("%H%M%S") .. ".txt", table.concat(lines, "\n"), function(ok, p)
-                say(ok and ("Saved " .. tostring(#lines) .. " entries -> " .. p) or ("Save failed: " .. tostring(p)))
+                local doneMsg = ok and ("Saved " .. tostring(#lines) .. " entries -> " .. p) or ("Save failed: " .. tostring(p))
+                SetExportProgress(ok and 100 or 0, doneMsg)
+                say(doneMsg)
             end)
         end)
+        EnhanceCardButtons(asDetailFrame)
     end)
 })
 
@@ -1588,6 +1967,7 @@ feature("Shield", "Decoder")({
                 say("Failed to decrypt -> marked as .enc")
             end
         end)
+        EnhanceCardButtons(decInFrame)
 
         local DecOutCard = c:Card("Decoded Output", "Result", "Chat", {
             Subtitle = "Detected encoding chain & plaintext result"
@@ -1614,6 +1994,7 @@ feature("Shield", "Decoder")({
                 say(ok and ("Saved: " .. p) or ("Save error: " .. tostring(p)))
             end)
         end)
+        EnhanceCardButtons(decOutFrame)
     end)
     -- Panel kanan otomatis menampilkan Global Theme & Window Settings (sama seperti SampleGui.lua)
 })
@@ -1632,10 +2013,12 @@ feature("Misc", "Export & Misc")({
         })
         local expFrame = GetLastFrame(CurrentCenterPage())
         AttachStatusBanner(expFrame, ("Workspace folder: <executor>/%s/"):format(ROOT))
+        AttachExportProgressBar(expFrame, "Idle — Click Export ALL to build .zip")
 
         ExportCard:Button("Export ALL (ZIP Archive)", "EXPORT", "Collect", function()
+            SetExportProgress(1, "Starting full ZIP export...")
             say("Starting full ZIP export...")
-            S.ExportAll(say)
+            S.ExportAll(say, SetExportProgress)
         end)
         ExportCard:Button("Copy Save Directory Name", "COPY", "Check", function()
             if F.setclip then
@@ -1643,16 +2026,19 @@ feature("Misc", "Export & Misc")({
                 say("Copied folder name: " .. ROOT)
             end
         end)
+        EnhanceCardButtons(expFrame)
 
         local WinCard = c:Card("Window & Debugger Controls", nil, "Menu", {
             Subtitle = "Dock into R&8_DV floating squircle icon or unload debugger cleanly"
         })
+        local winFrame = GetLastFrame(CurrentCenterPage())
         WinCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
             UI:MinimizeToIcon()
         end)
         WinCard:Button("Unload & Destroy Debugger", "EXIT", "Shield", function()
             S.Destroy()
         end)
+        EnhanceCardButtons(winFrame)
     end)
 })
 

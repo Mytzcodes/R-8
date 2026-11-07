@@ -2792,29 +2792,103 @@ local function ImGui(config)
                 BadgeTxt.Parent = BadgePill
             end
 
-            RegisterThemeUpdater(Btn, function(theme)
-                local fg = GetOnFillColor(theme.Accent)
-                Btn.BackgroundColor3 = theme.Accent
-                btnStroke.Color = theme.Accent
-                Lbl.TextColor3 = fg
+            local BtnScale = Instance.new("UIScale")
+            BtnScale.Scale = 1
+            BtnScale.Parent = Btn
+
+            local isHovered = false
+            local isPressed = false
+            local defaultBadgeText = hasBadge and string.upper(tostring(actionBadge)) or ""
+
+            local function SyncButtonVisual(animated)
+                local fg = GetOnFillColor(CurrentTheme.Accent)
+                local targetBg = isPressed and CurrentTheme.ControlBg or (isHovered and CurrentTheme.CardHoverBg or CurrentTheme.Accent)
+                local targetFg = (isPressed or isHovered) and CurrentTheme.TextPrimary or fg
+                local targetStroke = isPressed and CurrentTheme.TextPrimary or (isHovered and CurrentTheme.Accent or CurrentTheme.Accent)
+                local targetStrokeThick = (isPressed or isHovered) and 1.8 or 1
+                local targetScale = isPressed and 0.97 or 1
+
+                btnStroke.Thickness = targetStrokeThick
+                Lbl.TextColor3 = targetFg
                 if recolorBtnIcon then
-                    recolorBtnIcon(fg)
+                    recolorBtnIcon(targetFg)
                 end
                 if BadgePill and BadgeTxt then
-                    BadgePill.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
-                    BadgeTxt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    if isPressed or isHovered then
+                        BadgePill.BackgroundColor3 = CurrentTheme.Accent
+                        BadgePill.BackgroundTransparency = 0
+                        BadgeTxt.TextColor3 = fg
+                    else
+                        BadgePill.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+                        BadgePill.BackgroundTransparency = 0.18
+                        BadgeTxt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    end
                 end
+
+                if animated then
+                    SmoothTween(Btn, 0.12, {BackgroundColor3 = targetBg, BackgroundTransparency = 0})
+                    SmoothTween(btnStroke, 0.12, {Color = targetStroke, Transparency = (isPressed or isHovered) and 0 or 0.16})
+                    SmoothTween(BtnScale, 0.10, {Scale = targetScale})
+                else
+                    Btn.BackgroundColor3 = targetBg
+                    Btn.BackgroundTransparency = 0
+                    btnStroke.Color = targetStroke
+                    btnStroke.Transparency = (isPressed or isHovered) and 0 or 0.16
+                    BtnScale.Scale = targetScale
+                end
+            end
+
+            RegisterThemeUpdater(Btn, function()
+                SyncButtonVisual(false)
             end)
 
             if HasMousePointer then
                 Btn.MouseEnter:Connect(function()
-                    SmoothTween(Btn, 0.12, {BackgroundTransparency = 0.10})
+                    isHovered = true
+                    SyncButtonVisual(true)
                 end)
                 Btn.MouseLeave:Connect(function()
-                    SmoothTween(Btn, 0.14, {BackgroundTransparency = 0})
+                    isHovered = false
+                    isPressed = false
+                    SyncButtonVisual(true)
                 end)
             end
+
+            Btn.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    isPressed = true
+                    SyncButtonVisual(true)
+                end
+            end)
+            Btn.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    if isPressed then
+                        isPressed = false
+                        SyncButtonVisual(true)
+                    end
+                end
+            end)
+
+            local clickToken = 0
             Btn.MouseButton1Click:Connect(function()
+                clickToken += 1
+                local myToken = clickToken
+                isPressed = true
+                SyncButtonVisual(true)
+                if BadgeTxt and defaultBadgeText ~= "" then
+                    BadgeTxt.Text = "CLICKED"
+                end
+                task.delay(0.12, function()
+                    if Btn and Btn.Parent then
+                        isPressed = false
+                        SyncButtonVisual(true)
+                    end
+                end)
+                task.delay(0.55, function()
+                    if BadgeTxt and BadgeTxt.Parent and clickToken == myToken and defaultBadgeText ~= "" then
+                        BadgeTxt.Text = defaultBadgeText
+                    end
+                end)
                 if callback then task.spawn(callback) end
             end)
         end
