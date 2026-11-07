@@ -12,16 +12,15 @@ assert(okFetch and type(rawScript) == "string" and #rawScript > 128, "[R&8_DV] H
 
 local ImGui = loadstring(rawScript)()
 
--- 2. Inisialisasi Jendela Colourful Gradient & Heavy Display Typography (60 FPS Instant)
+-- 2. Inisialisasi Jendela R&8_DV (Teks Solid Tajam Anti-Rusak, Tombol Lega & Smooth 60 FPS)
 local UI = ImGui({
     Title = "DRY CURSED - IMGUI",
-    BrandTitle = "R&8_DV",           -- Judul huruf besar ekstra-tebal di bawah logo sidebar
-    BrandSubtitle = "IMGUI SUITE",   -- Sub-judul bergradasi aksen di bawah logo sidebar
-    Theme = "Blue Night Sky",        -- "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai" | "Minimalist Monochrome"
-    CheckboxStyle = "Modern",        -- "Modern" (Pill Switch) | "Checkbox" (Square Check)
-    Text3D = true,                   -- Teks berwarna 2.5D / 3D dual-hue gradient (0% FPS Drop)
-    LetterSpacing = 1,               -- Spasi antar huruf header & judul (0 - 3)
-    AutoLoading = false              -- Langsung buka instan 0ms tanpa delay/jeda!
+    BrandTitle = "R&8_DV",            -- Judul utama solid & tegas di bawah logo sidebar
+    BrandSubtitle = "IMGUI SUITE",    -- Sub-judul di bawah logo sidebar
+    Theme = "Minimalist Monochrome",  -- "Minimalist Monochrome" | "Blue Night Sky" | "Violet Amethyst" | "Orange Sand" | "Midnight Monokai"
+    CheckboxStyle = "Modern",         -- "Modern" (Pill Switch) | "Checkbox" (Checklist Kotak)
+    LetterSpacing = 1,                -- Spasi antar huruf header & judul (0 - 3)
+    AutoLoading = false               -- Langsung buka instan 0ms tanpa delay!
 }).Call(3)
 
 local feature = UI.feature
@@ -29,11 +28,11 @@ local function center(fn) return fn end
 local function right(fn) return fn end
 
 local ThemeChoices = UI.GetThemes and UI:GetThemes() or {
+    "Minimalist Monochrome",
     "Blue Night Sky",
     "Violet Amethyst",
     "Orange Sand",
-    "Midnight Monokai",
-    "Minimalist Monochrome"
+    "Midnight Monokai"
 }
 
 -- =========================================================================
@@ -43,24 +42,17 @@ if UI.Category then UI:Category("Overview") end
 
 feature("Home", "Home")({
     center = center(function(c)
-        c:Header("Home", "Vibrant dual-hue gradients & heavy display typography", "v5.2 Live")
-
-        if c.HighlightBanner then
-            c:HighlightBanner(
-                "R&8_DV V5.2 // COLOURFUL EDITION",
-                "BOLD FONTS. BIGGER GRADIENT ENERGY.",
-                "Dual-hue 2-point vertex gradients across headers, tabs, cards, sliders & CTA buttons at 60 FPS.",
-                "60 FPS"
-            )
-        end
+        c:Header("Dashboard", "Clean minimalist interface with high-contrast solid typography", "Ready")
 
         c:StatRow({
             { Icon = "Shield", Label = "Status",  Value = "Undetected" },
             { Icon = "Bolt",   Label = "Render",  Value = "60 FPS Smooth" },
-            { Icon = "Clock",  Label = "Engine",  Value = "v5.2 Colour" }
+            { Icon = "Clock",  Label = "Version", Value = "v5.3 Stable" }
         })
 
-        local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt")
+        local QuickCard = c:Card("Quick Actions", "6 Shortcuts", "Bolt", {
+            Subtitle = "Toggle frequently used modules directly from home"
+        })
         QuickCard:ActionGrid({
             { Icon = "AutoFarm",  Name = "Auto Farm",      Flag = "QuickAutoFarm", Default = true },
             { Icon = "Teleports", Name = "Teleport",       Flag = "QuickTP" },
@@ -70,72 +62,85 @@ feature("Home", "Home")({
             { Icon = "Collect",   Name = "Collect All",    Flag = "QuickCollect" }
         })
 
-        local ActivityCard = c:Card("Recent Activity", "Live Logs", "Clock")
+        local SessionCard = c:Card("Session Control", nil, "Shield", {
+            Subtitle = "Core protection & automatic session safeguards",
+            ToggleFlag = "MasterSessionGuard",
+            Default = true
+        })
+        SessionCard:Toggle("Anti-AFK Idle Guard", "AntiAFK", true)
+        SessionCard:Toggle("Auto Reconnect on Kick", "AutoReconnect", false)
+
+        local ActivityCard = c:Card("Recent Activity", "Live Logs", "Clock", {
+            Subtitle = "Latest framework and module events"
+        })
         ActivityCard:ActivityTimeline({
-            { Text = "R&8_DV Colourful v5.2 Initialized",   Time = "Just now" },
-            { Text = "Dual-Hue 2-Point Gradients Active",   Time = "1m ago" },
-            { Text = "Single-Border Popup Icon Ready",      Time = "2m ago" },
-            { Text = "GitHub Master Crest Cached",          Time = "4m ago" }
+            { Text = "R&8_DV v5.3 Solid UI Initialized",   Time = "Just now" },
+            { Text = "High-Contrast Text Guard Verified",  Time = "1m ago" },
+            { Text = "Single-Border Popup Icon Ready",     Time = "2m ago" },
+            { Text = "GitHub Master Crest Cached",         Time = "4m ago" }
         })
     end),
 
-    -- Panel Kanan Global
+    -- Panel Kanan Global: Seluruh pengaturan dibungkus rapi di dalam Card!
     right = right(function(r)
-        r:Section("Theme & Typography", "Palette")
-        if r.ThemeSwatches then
-            r:ThemeSwatches("Colour Palette")
+        local ThemeCard = r:Card("Theme & Checklist", nil, "Palette", {
+            Subtitle = "Choose colour palette and switch/checkbox style"
+        })
+        if ThemeCard.ThemeSwatches then
+            ThemeCard:ThemeSwatches("Colour Palette")
         end
-        r:Dropdown("Color Style", "ThemeSelect", ThemeChoices, "Blue Night Sky", function(selectedTheme)
+        ThemeCard:Dropdown("Color Style", "ThemeSelect", ThemeChoices, "Minimalist Monochrome", function(selectedTheme)
             UI:SetTheme(selectedTheme)
         end)
-        r:Toggle("2.5D / 3D Colourful Font", "Text3DToggle", true, function(state)
-            if UI.SetText3D then UI:SetText3D(state) end
-        end)
-        r:Slider("Letter Spacing", "LetterSpacingVal", 0, 3, 1, "x", function(val)
-            if UI.SetLetterSpacing then UI:SetLetterSpacing(val) end
-        end)
-        r:Dropdown("Checkbox Style", "CheckboxStyleMode", {
+        ThemeCard:Dropdown("Checkbox Style", "CheckboxStyleMode", {
             "Modern",
             "Checkbox"
         }, "Modern", function(mode)
             if UI.SetCheckboxStyle then UI:SetCheckboxStyle(mode) end
         end)
+        ThemeCard:Slider("Letter Spacing", "LetterSpacingVal", 0, 3, 1, "x", function(val)
+            if UI.SetLetterSpacing then UI:SetLetterSpacing(val) end
+        end)
 
-        r:Section("Window & Layout", "Sliders")
-        r:Slider("UI Scale", "UIScalePct", 60, 130, 100, "%", function(val)
+        local LayoutCard = r:Card("Window & Layout", nil, "Sliders", {
+            Subtitle = "Scale, surface opacity, corners and menu hotkey"
+        })
+        LayoutCard:Slider("UI Scale", "UIScalePct", 60, 130, 100, "%", function(val)
             if UI.SetScale then
                 UI:SetScale(val / 100)
             else
                 UI.UIScale = val / 100
             end
         end)
-        r:Slider("Transparency", "BgTransPct", 0, 55, 4, "%", function(val)
+        LayoutCard:Slider("Transparency", "BgTransPct", 0, 55, 4, "%", function(val)
             UI:SetTransparency(val / 100)
         end)
-        r:Toggle("Lock Position", "LockPosition", false)
-        r:Toggle("Rounded Borders", "RoundedState", true, function(state)
+        LayoutCard:Toggle("Rounded Borders", "RoundedState", true, function(state)
             UI:SetRounded(state)
         end)
-        if r.Keybind then
-            r:Keybind("Toggle Menu Key", "MenuHotkey", Enum.KeyCode.RightShift, function(newKey)
+        LayoutCard:Toggle("Lock Position", "LockPosition", false)
+        if LayoutCard.Keybind then
+            LayoutCard:Keybind("Toggle Menu Key", "MenuHotkey", Enum.KeyCode.RightShift, function(newKey)
                 if newKey then
                     UI.ToggleKey = newKey
                 end
             end)
         end
 
-        r:Section("Performance", "Bolt")
-        r:Toggle("FPS Boost", "FPSBoost", false)
-        r:Toggle("Reduce Effects", "ReduceEffects", false)
+        local PerfCard = r:Card("Performance", nil, "Bolt", {
+            Subtitle = "Instant zero-tween mode for low-end devices"
+        })
+        PerfCard:Toggle("FPS Boost", "FPSBoost", false)
+        PerfCard:Toggle("Reduce Effects", "ReduceEffects", false)
     end)
 })
 
 -- =========================================================================
--- KATEGORI 2: MODULES (SESUAI REFERENSI MENU)
+-- KATEGORI 2: MODULES
 -- =========================================================================
 if UI.Category then UI:Category("Modules") end
 
--- Tab Combat (Card dengan Subtitle & Master Header Switch + Keybind)
+-- Tab Combat (3 Card Lengkap)
 feature("Combat", "Combat")({
     center = center(function(c)
         c:Header("Combat", "Target assistance, response policy & keybind limits", "Targets")
@@ -166,13 +171,21 @@ feature("Combat", "Combat")({
         end
         ProfileCard:Slider("Response Smoothness", "AimSmoothness", 0.10, 1.00, 0.50, "x", nil, 0.05)
         ProfileCard:Stepper("Target Priority Slot", "PriorityLevel", 1, 1)
+
+        local TriggerCard = c:Card("Trigger & Limits", nil, "Bolt", {
+            Subtitle = "Reaction delay and automatic fire safety",
+            ToggleFlag = "MasterTrigger",
+            Default = false
+        })
+        TriggerCard:Toggle("Team Check Safety", "TriggerTeamCheck", true)
+        TriggerCard:Slider("Reaction Delay", "TriggerDelay", 0, 250, 45, " ms", nil, 5)
     end)
 })
 
--- Tab Auto Farm (Interactive Feature Hover Cards + 5x5 Tile Breaker Grid)
+-- Tab Auto Farm (Feature Hover Cards + Farming Settings Card + Right Matrix Cards)
 feature("Bot", "Auto Farm")({
     center = center(function(c)
-        c:Header("Automation", "Interactive hover cards & automated farming routines", "Active")
+        c:Header("Automation", "Interactive feature cards & automated farming routines", "Active")
 
         if c.FeatureCard then
             c:FeatureCard({
@@ -197,62 +210,75 @@ feature("Bot", "Auto Farm")({
                 Default = false
             })
             c:FeatureCard({
-                Icon = "Fish",
-                Title = "Fishing",
-                Description = "Automatically pull rod when fish bite is detected.",
-                Flag = "CardFishing",
+                Icon = "Bot",
+                Title = "Auto Quest",
+                Description = "Claim and repeat active farming quests automatically.",
+                Flag = "CardAutoQuest",
                 Default = false
             })
-        else
-            local FallbackCard = c:Card("Farming Modules", nil, "AutoFarm")
-            FallbackCard:Toggle("Autofarm", "CardAutofarm", true)
-            FallbackCard:Toggle("Spammer", "CardSpammer", false)
-            FallbackCard:Toggle("Collect", "CardCollect", false)
-            FallbackCard:Toggle("Fishing", "CardFishing", false)
         end
+
+        local FarmCfgCard = c:Card("Farming Behaviour", nil, "Sliders", {
+            Subtitle = "Fine-tune collection radius and spammer interval"
+        })
+        FarmCfgCard:Slider("Collect Radius", "CollectRadius", 10, 120, 40, " studs")
+        FarmCfgCard:Slider("Chat Interval", "SpamInterval", 1, 30, 5, " s")
     end),
 
     right = right(function(r)
-        r:Section("Autofarm Matrix", "Grid")
         local TileCard = r:Card("Block to Break", nil, "Bot", {
-            Subtitle = "Configure target block & surrounding break matrix"
+            Subtitle = "Configure target block & surrounding 5x5 break matrix"
         })
         TileCard:Input("Target Block", "BlockToBreak", "Block name...", "Bountiful Lattice Fence")
         TileCard:Slider("Hit Delay", "FarmHitDelay", 60, 400, 160, " ms")
         if TileCard.TileGrid then
             TileCard:TileGrid("Select tile to break (P = Player)", "BreakMatrix", 5, 5)
         end
+
+        local SafetyCard = r:Card("Farm Safety", nil, "Shield", {
+            Subtitle = "Stop automation when staff or players approach"
+        })
+        SafetyCard:Toggle("Pause on Nearby Player", "PauseNearPlayer", true)
+        SafetyCard:Toggle("Auto Store Inventory", "AutoStoreInv", false)
     end)
 })
 
--- Tab Visuals (Player Geometry & Overlay Style Cards)
+-- Tab Visuals (3 Card Lengkap)
 feature("Visuals", "Visuals")({
     center = center(function(c)
-        c:Header("Visuals", "Player geometry, status flags & world overlay style", "Overlay")
+        c:Header("Visuals", "Player geometry, world items & overlay customization", "Overlay")
 
         local GeoCard = c:Card("Player Geometry", nil, "Visuals", {
-            Subtitle = "Bounding box, skeleton and health bar indicators",
+            Subtitle = "Bounding box, tracers and health bar indicators",
             ToggleFlag = "MasterPlayerGeo",
             Default = true
         })
         GeoCard:Toggle("Bounding Box", "BoxESP", true)
-        GeoCard:Toggle("Skeleton Overlay", "SkeletonESP", false)
+        GeoCard:Toggle("Name & Distance Tag", "NameESP", true)
         GeoCard:Toggle("Health Bar", "HealthBarESP", true)
-        GeoCard:Slider("Display Range", "ESPRange", 50, 1000, 450, "m")
+        GeoCard:Slider("Display Range", "ESPRange", 50, 1000, 450, " m")
+
+        local WorldCard = c:Card("World & Dropped Items", nil, "Collect", {
+            Subtitle = "Highlight chests, collectibles and objectives",
+            ToggleFlag = "MasterWorldESP",
+            Default = false
+        })
+        WorldCard:Toggle("Show Dropped Loot", "LootESP", true)
+        WorldCard:Toggle("Show Spawn Chests", "ChestESP", false)
 
         local StyleCard = c:Card("Overlay Style", nil, "Palette", {
-            Subtitle = "Customize ESP stroke thickness and health bar mode"
+            Subtitle = "Customize ESP stroke thickness and bar mode"
         })
         StyleCard:Slider("Line Width", "ESPLineWidth", 1.0, 4.0, 1.5, " px", nil, 0.5)
-        StyleCard:Dropdown("Health Style", "ESPHealthStyle", {
-            "Gradient",
+        StyleCard:Dropdown("Health Bar Mode", "ESPHealthStyle", {
             "Solid",
+            "Dynamic",
             "Minimal"
-        }, "Gradient")
+        }, "Solid")
     end)
 })
 
--- Tab Player & Teleports
+-- Tab Player (3 Card Lengkap)
 feature("Player", "Player")({
     center = center(function(c)
         c:Header("Player & World", "Character movement overrides and instant teleportation", "LocalPlayer")
@@ -273,6 +299,17 @@ feature("Player", "Player")({
             if hum then hum.JumpPower = val end
         end)
 
+        local CharCard = c:Card("Character Utility", nil, "Player", {
+            Subtitle = "Physics and camera helpers"
+        })
+        CharCard:Toggle("NoClip Collision", "NoClipToggle", false)
+        CharCard:Toggle("Infinite Jump", "PlayerInfJump", false)
+        CharCard:Slider("Field of View", "CameraFOV", 70, 120, 70, " deg", function(val)
+            if workspace.CurrentCamera then
+                workspace.CurrentCamera.FieldOfView = val
+            end
+        end)
+
         local TpCard = c:Card("Destination Warp", nil, "Teleports", {
             Subtitle = "Instant player & world coordinate warping"
         })
@@ -285,18 +322,35 @@ feature("Player", "Player")({
     end)
 })
 
--- Tab Misc
+-- Tab Misc (3 Card Lengkap)
 feature("Misc", "Misc")({
     center = center(function(c)
-        c:Header("Misc", "Additional utility shortcuts & configuration tools", "Utility")
+        c:Header("Misc", "Session utilities, configuration & window shortcuts", "Utility")
+
         local UtilCard = c:Card("Session Utilities", nil, "Misc", {
-            Subtitle = "Quick server & interface actions"
+            Subtitle = "Interface notifications and stream privacy"
         })
-        UtilCard:Toggle("Notifications", "NotifyToggle", true)
-        if UtilCard.Button then
-            UtilCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
-                UI:MinimizeToIcon()
-            end)
-        end
+        UtilCard:Toggle("System Notifications", "NotifyToggle", true)
+        UtilCard:Toggle("Stream Proof Mode", "StreamProof", false)
+
+        local CfgCard = c:Card("Configuration Profile", nil, "Sliders", {
+            Subtitle = "Manage active preset slot"
+        })
+        CfgCard:Dropdown("Active Preset", "ConfigSlot", {
+            "Default",
+            "Legit",
+            "Farming",
+            "Custom"
+        }, "Default")
+        CfgCard:Button("Apply Selected Preset", "LOAD", "Check", function()
+            print("[R&8_DV] Loaded preset:", UI:GetValue("ConfigSlot"))
+        end)
+
+        local WinActionCard = c:Card("Window Controls", nil, "Menu", {
+            Subtitle = "Quickly dock menu into floating squircle icon"
+        })
+        WinActionCard:Button("Minimize to Popup Icon", "HIDE", "Minimize", function()
+            UI:MinimizeToIcon()
+        end)
     end)
 })
