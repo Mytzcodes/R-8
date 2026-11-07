@@ -1,80 +1,56 @@
--- Load Framework (Replace with your raw GitHub link or keep inline)
-local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/YOUR_REPO/R8_DV_ImGui.lua"))() 
--- Note: If running in a single script inside your executor, just put the module code above and assign `local UI = ImGui({...})`
+-- 1. Panggil Framework R&8_DV (Ganti URL dengan link RAW tempat Anda menyimpan R8_DV_ImGui.lua)
+local ImGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/R8_DV_ImGui.lua"))()
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-
--- 1. Initialize Full Canvas & Call(3) for 25% Left | 50% Center | 25% Right
+-- 2. Panggil Canvas 3 Sisi (25% Kiri | 50% Tengah | 25% Kanan)
+-- Logo GitHub, Vector Icon, Loading Screen, dan Minimize Icon otomatis diurus Framework!
 local UI = ImGui({
-    Title = "DRY CURSED  •  IMGUI",
-    Theme = "Blue Night Sky",
-    Rounded = true,
-    FocusMode = true,
-    -- Optional: Pass a raw URL or local executor image for the crest logo or background banner
-    LogoImage = "", 
-    BannerImage = ""
+    Title = "DRY CURSED  -  IMGUI",
+    Theme = "Blue Night Sky"
 }).Call(3)
 
--- Show Optional Startup Loading Screen
-UI:ShowLoading("DRY CURSED  •  IMGUI", "Powered by R&8_DV 3-Side Architecture", 1.4)
-
--- Global Helpers for Syntax Sugar requested: `feature(Logo, name) { center(...), right(...) }`
 local feature = UI.feature
 local function center(fn) return fn end
 local function right(fn) return fn end
 
 -- =========================================================================
--- TAB 1: HOME (Matches Reference Screenshot Layout)
+-- FEATURE 1: HOME
 -- =========================================================================
-local StatLabels
 feature("Home", "Home")({
     center = center(function(c)
-        c:Header("Home", "Welcome back, keep going!", "Game Ready  📊")
+        c:Header("Home", "Welcome back, keep going!", "Game Ready")
 
-        StatLabels = c:StatRow({
+        c:StatRow({
             { Icon = "Bolt",   Label = "Status",  Value = "Safe" },
-            { Icon = "Clock",  Label = "Runtime", Value = "00:00:00" },
-            { Icon = "Shield", Label = "Version", Value = "v1.0.0" }
+            { Icon = "Clock",  Label = "Runtime", Value = "00:12:34" },
+            { Icon = "Shield", Label = "Version", Value = "v4.0.0" }
         })
 
-        local QuickCard = c:Card("⚡  Quick Actions", "View All →")
+        local QuickCard = c:Card("Quick Actions", "View All", "Bolt")
         QuickCard:ActionGrid({
-            { Icon = "AutoFarm",  Name = "Auto Farm",     Flag = "QuickAutoFarm", Callback = function(state)
-                print("[R&8_DV] Auto Farm state:", state)
-            end },
-            { Icon = "Teleports", Name = "Teleport",      Flag = "QuickTP", Callback = function()
-                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                    LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(0, 50, 0)
-                end
-            end },
+            { Icon = "AutoFarm",  Name = "Auto Farm",     Flag = "QuickAutoFarm" },
+            { Icon = "Teleports", Name = "Teleport",      Flag = "QuickTP" },
             { Icon = "Visuals",   Name = "ESP",           Flag = "QuickESP" },
-            { Icon = "Bolt",      Name = "Speed Hack",    Flag = "QuickSpeed", Callback = function(state)
-                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if hum then hum.WalkSpeed = state and 48 or 16 end
-            end },
-            { Icon = "Player",    Name = "Infinite Jump", Flag = "QuickInfJump" },
-            { Icon = "Misc",      Name = "Collect All",   Flag = "QuickCollect" }
+            { Icon = "Speed",     Name = "Speed Hack",    Flag = "QuickSpeed" },
+            { Icon = "Jump",      Name = "Infinite Jump", Flag = "QuickInfJump" },
+            { Icon = "Collect",   Name = "Collect All",   Flag = "QuickCollect" }
         })
 
-        local ActivityCard = c:Card("🕒  Recent Activity", "View Logs →")
+        local ActivityCard = c:Card("Recent Activity", "View Logs", "Clock")
         ActivityCard:ActivityTimeline({
-            { Text = "Script Loaded (R&8_DV Engine)", Time = "Just now" },
-            { Text = "Auto Farm Activated",           Time = "2m ago" },
-            { Text = "Teleported to Spawn",           Time = "5m ago" },
-            { Text = "ESP Enabled",                   Time = "8m ago" }
+            { Text = "Script Loaded",        Time = "2m ago" },
+            { Text = "Auto Farm Activated",  Time = "4m ago" },
+            { Text = "Teleported to Spawn",  Time = "7m ago" },
+            { Text = "ESP Enabled",          Time = "10m ago" }
         })
     end),
 
-    -- Right Inspector Panel (25% Width)
     right = right(function(r)
-        r:Section("⚙  Settings")
+        r:Section("Settings", "Settings")
         r:Section("General")
         r:Slider("UI Scale", "UIScalePct", 60, 130, 100, "%", function(val)
             UI.UIScale = val / 100
         end)
-        r:Slider("Transparency", "BgTransPct", 0, 60, 8, "%", function(val)
+        r:Slider("Transparency", "BgTransPct", 0, 60, 6, "%", function(val)
             UI:SetTransparency(val / 100)
         end)
         r:Toggle("Lock Position", "LockPosition", false)
@@ -83,9 +59,7 @@ feature("Home", "Home")({
         end)
 
         r:Section("Performance")
-        r:Toggle("FPS Boost", "FPSBoost", false, function(state)
-            if state then settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end
-        end)
+        r:Toggle("FPS Boost", "FPSBoost", false)
         r:Toggle("Reduce Effects", "ReduceEffects", false)
 
         r:Section("Theme")
@@ -96,9 +70,6 @@ feature("Home", "Home")({
         }, "Blue Night Sky", function(selectedTheme)
             UI:SetTheme(selectedTheme)
         end)
-        r:Input("Custom Banner", "BannerURL", "rbxassetid:// or https://...", "", function(url)
-            UI:SetBanner(url, 0.82)
-        end)
 
         r:Section("Other")
         r:Toggle("Notifications", "NotifyToggle", true)
@@ -107,73 +78,50 @@ feature("Home", "Home")({
 })
 
 -- =========================================================================
--- TAB 2: AUTO FARM
+-- FEATURE LAINNYA (SIDEBAR KIRI)
 -- =========================================================================
 feature("AutoFarm", "Auto Farm")({
     center = center(function(c)
-        c:Header("Auto Farm", "Configure automated farming loops & combat radius", "Active  ⚡")
-        local FarmCard = c:Card("🚀  Farming Configuration", "Backend Ready")
-        FarmCard:Toggle("Enable Master Auto Farm", "MasterFarm", false)
-        FarmCard:Slider("Attack Distance", "FarmDist", 5, 50, 18, " studs")
-        FarmCard:Stepper("Farm Loop Delay (ms)", "FarmDelay", 100, 25)
-        FarmCard:Dropdown("Attack Method", "FarmMethod", {"Behind Target", "Above Target", "Orbit"}, "Above Target")
+        c:Header("Auto Farm", "Automated farming configuration", "Active")
+        local Card = c:Card("Farming Controls", "Ready", "AutoFarm")
+        Card:Toggle("Enable Auto Farm", "MasterFarm", false)
+        Card:Slider("Attack Distance", "FarmDist", 5, 50, 18, " studs")
     end)
 })
 
--- =========================================================================
--- TAB 3: PLAYER
--- =========================================================================
-feature("Player", "Player")({
-    center = center(function(c)
-        c:Header("Player", "Real-time character movement & physics overrides", "LocalPlayer")
-        local PhysCard = c:Card("👤  Movement Overrides")
-        PhysCard:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, " ws", function(v)
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = v end
-        end)
-        PhysCard:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, " jp", function(v)
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.UseJumpPower = true; hum.JumpPower = v end
-        end)
-    end)
-})
-
--- =========================================================================
--- TAB 4: TELEPORTS / VISUALS / MISC / SETTINGS
--- =========================================================================
 feature("Teleports", "Teleports")({
     center = center(function(c)
-        c:Header("Teleports", "Instant coordinate & player warping")
-        local TpCard = c:Card("📍  Destination Input")
-        TpCard:Input("Target Player", "TpTargetName", "Username...", "", function(name)
-            local target = Players:FindFirstChild(name)
-            if target and target.Character and LocalPlayer.Character then
-                LocalPlayer.Character:PivotTo(target.Character:GetPivot())
-            end
-        end)
+        c:Header("Teleports", "Instant world & player warping")
+        local Card = c:Card("Destination", nil, "Teleports")
+        Card:Input("Target Player", "TpTarget", "Username...", "")
+    end)
+})
+
+feature("Player", "Player")({
+    center = center(function(c)
+        c:Header("Player", "Character movement overrides")
+        local Card = c:Card("Movement", nil, "Player")
+        Card:Slider("WalkSpeed", "WalkSpeedVal", 16, 200, 16, "")
+        Card:Slider("JumpPower", "JumpPowerVal", 50, 300, 50, "")
     end)
 })
 
 feature("Visuals", "Visuals")({
     center = center(function(c)
-        c:Header("Visuals", "ESP highlights and field-of-view control")
-        local VisCard = c:Card("👁  Camera & ESP")
-        VisCard:Slider("Field of View", "CameraFOV", 70, 120, 70, "°", function(v)
-            if workspace.CurrentCamera then workspace.CurrentCamera.FieldOfView = v end
-        end)
+        c:Header("Visuals", "ESP and camera field of view")
+        local Card = c:Card("Visual Settings", nil, "Visuals")
+        Card:Toggle("Player Box ESP", "BoxESP", false)
     end)
 })
 
--- Live Runtime Counter Update
-local startTime = os.time()
-task.spawn(function()
-    while task.wait(1) do
-        local elapsed = os.time() - startTime
-        local h = math.floor(elapsed / 3600)
-        local m = math.floor((elapsed % 3600) / 60)
-        local s = elapsed % 60
-        if StatLabels and StatLabels[2] then
-            StatLabels[2].Text = string.format("%02d:%02d:%02d", h, m, s)
-        end
-    end
-end)
+feature("Misc", "Misc")({
+    center = center(function(c)
+        c:Header("Misc", "Additional utility tools")
+    end)
+})
+
+feature("Sliders", "Settings")({
+    center = center(function(c)
+        c:Header("Settings", "Framework configuration")
+    end)
+})
