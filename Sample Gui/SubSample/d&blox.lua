@@ -2,8 +2,8 @@
 -- Usage: Ganti GITHUB_BASE_URL dengan URL Raw Repository GitHub milikmu tempat core_backend.lua dan ui_frontend.lua diupload.
 
 local GITHUB_BASE_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/refs/heads/main/Sample%20Gui/SubSample/"
-local BACKEND_URL     = GITHUB_BASE_URL .. "x%262918.lua"
-local FRONTEND_URL    = GITHUB_BASE_URL .. "x%261823.lua"
+local BACKEND_URL     = GITHUB_BASE_URL .. "x%261823.lua"
+local FRONTEND_URL    = GITHUB_BASE_URL .. "x%262918.lua"
 
 local function FetchAndExecute(url, moduleLabel)
     local okHttp, source = pcall(function()
