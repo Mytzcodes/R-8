@@ -1284,6 +1284,101 @@ local function findAnchorContainer(text, tries, waitT)
 end
 
 
+-- =========================================================================
+-- SET CLOTHES (REFORMAT): Bar "Dipakai" -> Search -> Info -> Grid kotak
+--  * Katalog = grid kotak (virtual, ringan walau ribuan item)
+--  * Tap 2x di kotak = langsung dipakai
+--  * Tap 1x di kotak = tampilkan info (gambar, nama, slot, ID) di strip info
+--  * Bar "Dipakai": kotak per slot, tap = copot (ubah WORN_TAPS = 2 jika mau 2x)
+-- =========================================================================
+local WORN_TAPS = 1
+
+local function newVGrid(parent, opts)
+    local cell = opts.cell
+    local gap = opts.gap or 8
+    local pad = opts.pad or 8
+    local step = cell + gap
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = opts.name or "VGrid"
+    scroll.Size = opts.size
+    scroll.Position = opts.position
+    scroll.BackgroundColor3 = Color3.fromRGB(12, 13, 17)
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 5
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 85, 100)
+    scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    scroll.CanvasSize = UDim2.new()
+    scroll.Parent = parent
+    uiCorner(scroll, 8)
+    uiStroke(scroll, Color3.fromRGB(32, 34, 42), 1)
+
+    local G = { Scroll = scroll, Data = {}, Pool = {}, Cols = 1 }
+
+    function G:Layout()
+        local w = scroll.AbsoluteSize.X - 8
+        local h = scroll.AbsoluteWindowSize.Y
+        if w <= 0 then w = 420 end
+        if h <= 0 then h = 380 end
+        local cols = math.max(1, math.floor((w - pad * 2 + gap) / step))
+        self.Cols = cols
+        local total = #self.Data
+        local rows = math.ceil(total / cols)
+        scroll.CanvasSize = UDim2.fromOffset(0, total > 0 and (pad * 2 + rows * step - gap) or 0)
+
+        local need = (math.ceil(h / step) + 3) * cols
+        while #self.Pool < need do
+            local c = opts.makeCell(scroll)
+            c.frame.Size = UDim2.fromOffset(cell, cell)
+            c.frame.Visible = false
+            self.Pool[#self.Pool + 1] = c
+        end
+        local n = #self.Pool
+
+        local xOff = math.max(pad, math.floor((w - (cols * step - gap)) / 2))
+        local firstRow = math.max(0, math.floor((scroll.CanvasPosition.Y - pad) / step))
+        local first = firstRow * cols + 1
+        local last = math.min(total, first + n - 1)
+        local used = {}
+        for idx = first, last do
+            local c = self.Pool[(idx - 1) % n + 1]
+            used[c] = true
+            local item = self.Data[idx]
+            local r = math.floor((idx - 1) / cols)
+            local col = (idx - 1) % cols
+            c.frame.Position = UDim2.fromOffset(xOff + col * step, pad + r * step)
+            if c.item ~= item or c.dirty then
+                c.item = item
+                c.dirty = false
+                opts.bind(c, item)
+            end
+            c.frame.Visible = true
+        end
+        for _, c in ipairs(self.Pool) do
+            if not used[c] then
+                c.frame.Visible = false
+                c.item = nil
+            end
+        end
+    end
+
+    function G:SetData(data, toTop)
+        self.Data = data or {}
+        if toTop then scroll.CanvasPosition = Vector2.new(0, 0) end
+        for _, c in ipairs(self.Pool) do c.dirty = true end
+        self:Layout()
+    end
+
+    function G:Refresh()
+        for _, c in ipairs(self.Pool) do c.dirty = true end
+        self:Layout()
+    end
+
+    scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() G:Layout() end)
+    scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() G:Layout() end)
+    return G
+end
+
 local function scMountEmbeddedBrowser()
     task.spawn(function()
         task.wait(0.8)
@@ -1298,7 +1393,7 @@ local function scMountEmbeddedBrowser()
 
         local holder = Instance.new("Frame")
         holder.Name = "R8DV_EmbeddedClothesBrowser"
-        holder.Size = UDim2.new(1, 0, 0, 720)
+        holder.Size = UDim2.new(1, 0, 0, 660)
         holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
         holder.BorderSizePixel = 0
         holder.LayoutOrder = 99
@@ -1306,10 +1401,65 @@ local function scMountEmbeddedBrowser()
         uiCorner(holder, 10)
         uiStroke(holder, Color3.fromRGB(38, 40, 48), 1)
 
-        -- Search bar
+        -- ================= 1) BAR DIPAKAI SAAT INI =================
+        local wornBar = Instance.new("Frame")
+        wornBar.Name = "WornBar"
+        wornBar.Size = UDim2.new(1, -20, 0, 118)
+        wornBar.Position = UDim2.new(0, 10, 0, 10)
+        wornBar.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+        wornBar.BorderSizePixel = 0
+        wornBar.Parent = holder
+        uiCorner(wornBar, 8)
+        uiStroke(wornBar, Color3.fromRGB(44, 48, 58), 1)
+
+        local statusDot = Instance.new("Frame")
+        statusDot.Size = UDim2.fromOffset(8, 8)
+        statusDot.Position = UDim2.new(0, 12, 0, 12)
+        statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+        statusDot.BorderSizePixel = 0
+        statusDot.Parent = wornBar
+        uiCorner(statusDot, 99)
+
+        local wornTitle = uiLabel(wornBar, "DIPAKAI SEKARANG (0)", 11, Color3.fromRGB(230, 235, 245), UIFONT.bold)
+        wornTitle.Size = UDim2.new(1, -150, 0, 16)
+        wornTitle.Position = UDim2.new(0, 26, 0, 8)
+
+        local unwearBtn = Instance.new("TextButton")
+        unwearBtn.Size = UDim2.fromOffset(108, 22)
+        unwearBtn.Position = UDim2.new(1, -116, 0, 6)
+        unwearBtn.BackgroundColor3 = Color3.fromRGB(52, 22, 28)
+        unwearBtn.AutoButtonColor = false
+        unwearBtn.TextSize = 9
+        unwearBtn.TextColor3 = Color3.fromRGB(255, 120, 130)
+        unwearBtn.Text = "× LEPAS SEMUA"
+        lockFont(unwearBtn, UIFONT.bold)
+        unwearBtn.Parent = wornBar
+        uiCorner(unwearBtn, 5)
+        uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
+        unwearBtn.Activated:Connect(function() scUnwearAll() end)
+
+        local wornScroll = Instance.new("ScrollingFrame")
+        wornScroll.Size = UDim2.new(1, -16, 0, 80)
+        wornScroll.Position = UDim2.new(0, 8, 0, 32)
+        wornScroll.BackgroundTransparency = 1
+        wornScroll.BorderSizePixel = 0
+        wornScroll.ScrollBarThickness = 3
+        wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
+        wornScroll.ScrollingDirection = Enum.ScrollingDirection.X
+        wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+        wornScroll.CanvasSize = UDim2.new()
+        wornScroll.Parent = wornBar
+
+        local wornList = Instance.new("UIListLayout")
+        wornList.FillDirection = Enum.FillDirection.Horizontal
+        wornList.Padding = UDim.new(0, 8)
+        wornList.SortOrder = Enum.SortOrder.LayoutOrder
+        wornList.Parent = wornScroll
+
+        -- ================= 2) SEARCH =================
         local topSearchFrame = Instance.new("Frame")
-        topSearchFrame.Size = UDim2.new(1, -20, 0, 40)
-        topSearchFrame.Position = UDim2.new(0, 10, 0, 10)
+        topSearchFrame.Size = UDim2.new(1, -20, 0, 38)
+        topSearchFrame.Position = UDim2.new(0, 10, 0, 136)
         topSearchFrame.BackgroundColor3 = Color3.fromRGB(22, 24, 31)
         topSearchFrame.BorderSizePixel = 0
         topSearchFrame.Parent = holder
@@ -1317,11 +1467,11 @@ local function scMountEmbeddedBrowser()
         uiStroke(topSearchFrame, Color3.fromRGB(48, 52, 64), 1)
 
         local searchBox = Instance.new("TextBox")
-        searchBox.Size = UDim2.new(1, -120, 1, -8)
+        searchBox.Size = UDim2.new(1, -60, 1, -8)
         searchBox.Position = UDim2.new(0, 12, 0, 4)
         searchBox.BackgroundTransparency = 1
         searchBox.ClearTextOnFocus = false
-        searchBox.PlaceholderText = "Cari nama, ID, slot, atau asset ID..."
+        searchBox.PlaceholderText = "🔍  Cari nama, ID, slot..."
         searchBox.PlaceholderColor3 = Color3.fromRGB(115, 120, 135)
         searchBox.Text = SC.SearchQuery or ""
         searchBox.TextSize = 12
@@ -1331,167 +1481,151 @@ local function scMountEmbeddedBrowser()
         searchBox.Parent = topSearchFrame
 
         local clearSearchBtn = Instance.new("TextButton")
-        clearSearchBtn.Size = UDim2.new(0, 98, 0, 28)
-        clearSearchBtn.Position = UDim2.new(1, -104, 0.5, -14)
+        clearSearchBtn.Size = UDim2.fromOffset(30, 26)
+        clearSearchBtn.Position = UDim2.new(1, -36, 0.5, -13)
         clearSearchBtn.BackgroundColor3 = Color3.fromRGB(34, 37, 48)
         clearSearchBtn.AutoButtonColor = false
-        clearSearchBtn.TextSize = 10
+        clearSearchBtn.TextSize = 13
         clearSearchBtn.TextColor3 = Color3.fromRGB(200, 205, 220)
-        clearSearchBtn.Text = "RESET CARI"
+        clearSearchBtn.Text = "×"
         lockFont(clearSearchBtn, UIFONT.bold)
         clearSearchBtn.Parent = topSearchFrame
         uiCorner(clearSearchBtn, 6)
 
-        local countLabel = uiLabel(holder, "Memuat katalog...", 11, Color3.fromRGB(155, 160, 175), UIFONT.med)
-        countLabel.Size = UDim2.new(1, -24, 0, 18)
-        countLabel.Position = UDim2.new(0, 12, 0, 54)
+        -- ================= 3) STRIP INFO ITEM TERPILIH =================
+        local infoStrip = Instance.new("Frame")
+        infoStrip.Size = UDim2.new(1, -20, 0, 58)
+        infoStrip.Position = UDim2.new(0, 10, 0, 182)
+        infoStrip.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+        infoStrip.BorderSizePixel = 0
+        infoStrip.Parent = holder
+        uiCorner(infoStrip, 8)
+        uiStroke(infoStrip, Color3.fromRGB(44, 48, 58), 1)
 
-        -- Katalog (lebar penuh, tinggi 330)
-        local function makeClothRow(scroll)
-            local row = {}
+        local infoIconBg = Instance.new("Frame")
+        infoIconBg.Size = UDim2.fromOffset(44, 44)
+        infoIconBg.Position = UDim2.new(0, 7, 0.5, -22)
+        infoIconBg.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
+        infoIconBg.BorderSizePixel = 0
+        infoIconBg.Parent = infoStrip
+        uiCorner(infoIconBg, 7)
+        local infoIcon = scMakeIcon(infoIconBg, 3)
+        infoIcon.frame.Visible = false
+
+        local infoName = uiLabel(infoStrip, "Pilih item untuk melihat detail", 12, Color3.fromRGB(244, 246, 252), UIFONT.bold)
+        infoName.Size = UDim2.new(1, -130, 0, 20)
+        infoName.Position = UDim2.new(0, 60, 0, 9)
+
+        local infoSub = uiLabel(infoStrip, "", 10, Color3.fromRGB(148, 155, 172), UIFONT.reg)
+        infoSub.Size = UDim2.new(1, -130, 0, 16)
+        infoSub.Position = UDim2.new(0, 60, 0, 31)
+
+        local infoStatus = Instance.new("Frame")
+        infoStatus.Size = UDim2.fromOffset(12, 12)
+        infoStatus.Position = UDim2.new(1, -24, 0.5, -6)
+        infoStatus.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+        infoStatus.BorderSizePixel = 0
+        infoStatus.Visible = false
+        infoStatus.Parent = infoStrip
+        uiCorner(infoStatus, 99)
+
+        local selId
+        local function setInfo(item)
+            selId = item and item.id or nil
+            if not item then
+                infoIcon.frame.Visible = false
+                infoName.Text = "Pilih item untuk melihat detail"
+                infoSub.Text = ""
+                infoStatus.Visible = false
+                return
+            end
+            scSetIcon(infoIcon, item.id)
+            infoName.Text = item.name
+            infoSub.Text = string.format("%s  •  #%d  •  rbxassetid://%s%s", item.slot:upper(), item.id,
+                item.assetNum, item.doubleJump and "  •  2x JUMP" or "")
+            infoStatus.Visible = ((SC.Worn or {})[item.slot] == item.id)
+        end
+
+        -- ================= 4) GRID KATALOG (KOTAK) =================
+        local grid
+
+        local function makeCell(scroll)
+            local c = {}
             local card = Instance.new("TextButton")
-            card.Name = "ItemRow"
+            card.Name = "ItemCell"
             card.BorderSizePixel = 0
             card.AutoButtonColor = false
             card.Text = ""
             card.Parent = scroll
             uiCorner(card, 8)
-            row.frame = card
-            row.card = card
-            row.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
+            c.frame = card
+            c.card = card
+            c.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
 
             local iconBg = Instance.new("Frame")
-            iconBg.Size = UDim2.new(0, 52, 0, 52)
-            iconBg.Position = UDim2.new(0, 8, 0.5, -26)
+            iconBg.Size = UDim2.new(1, -10, 1, -10)
+            iconBg.Position = UDim2.fromOffset(5, 5)
             iconBg.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
             iconBg.BorderSizePixel = 0
             iconBg.Parent = card
-            uiCorner(iconBg, 7)
-            row.icon = scMakeIcon(iconBg, 3)
+            uiCorner(iconBg, 6)
+            c.icon = scMakeIcon(iconBg, 3)
 
-            row.title = uiLabel(card, "", 13, Color3.fromRGB(244, 246, 252), UIFONT.bold)
-            row.title.Size = UDim2.new(1, -170, 0, 22)
-            row.title.Position = UDim2.new(0, 68, 0, 10)
-
-            row.sub = uiLabel(card, "", 10, Color3.fromRGB(148, 155, 172), UIFONT.reg)
-            row.sub.Size = UDim2.new(1, -170, 0, 18)
-            row.sub.Position = UDim2.new(0, 68, 0, 34)
-
-            local badge = uiLabel(card, "", 10, Color3.fromRGB(185, 190, 205), UIFONT.bold, Enum.TextXAlignment.Center)
-            badge.Size = UDim2.new(0, 84, 0, 26)
-            badge.Position = UDim2.new(1, -92, 0.5, -13)
-            badge.BackgroundTransparency = 0
-            uiCorner(badge, 6)
-            row.badge = badge
+            local mark = Instance.new("Frame")
+            mark.Size = UDim2.fromOffset(10, 10)
+            mark.Position = UDim2.new(1, -14, 0, 4)
+            mark.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+            mark.BorderSizePixel = 0
+            mark.ZIndex = 6
+            mark.Visible = false
+            mark.Parent = card
+            uiCorner(mark, 99)
+            c.mark = mark
 
             card.Activated:Connect(function()
-                local item = row.item
+                local item = c.item
                 if not item then return end
                 local now = os.clock()
-                if SC.LastTapId == item.id and (now - SC.LastTapTime) <= 0.48 then
+                if SC.LastTapId == item.id and (now - SC.LastTapTime) <= 0.5 then
                     SC.LastTapId, SC.LastTapTime = nil, 0
+                    setInfo(item)
                     scWearOrToggleItem(item.id)
                 else
                     SC.LastTapId, SC.LastTapTime = item.id, now
-                    badge.Text = "TAP LAGI!"
-                    badge.BackgroundColor3 = Color3.fromRGB(55, 115, 215)
-                    badge.TextColor3 = Color3.fromRGB(255, 255, 255)
-                    task.delay(0.5, function()
-                        if row.item == item and SC.LastTapId == item.id then
-                            local eq = ((SC.Worn or {})[item.slot] == item.id)
-                            badge.Text = eq and "DIPAKAI ✓" or "2x TAP"
-                            badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
-                            badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
-                        end
-                    end)
+                    setInfo(item)
                 end
+                if grid then grid:Refresh() end
             end)
-            return row
+            return c
         end
 
-        local function bindClothRow(row, item)
-            local eq = ((SC.Worn or {})[item.slot] == item.id)
-            row.card.BackgroundColor3 = eq and Color3.fromRGB(20, 44, 34) or Color3.fromRGB(20, 22, 28)
-            row.stroke.Color = eq and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
-            if row.iconId ~= item.id then
-                row.iconId = item.id
-                scSetIcon(row.icon, item.id)
+        local function bindCell(c, item)
+            if not item then return end
+            local W = SC.Worn or {}
+            local eq = (W[item.slot] == item.id)
+            local sel = (selId == item.id)
+            c.card.BackgroundColor3 = eq and Color3.fromRGB(20, 44, 34) or Color3.fromRGB(20, 22, 28)
+            c.stroke.Color = sel and Color3.fromRGB(235, 238, 250)
+                or (eq and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52))
+            c.stroke.Thickness = sel and 2 or 1
+            c.mark.Visible = eq
+            if c.iconId ~= item.id then
+                c.iconId = item.id
+                scSetIcon(c.icon, item.id)
             end
-            row.title.Text = string.format("%s   #%d", item.name, item.id)
-            row.sub.Text = string.format("%s  •  rbxassetid://%s%s", item.slot:upper(), item.assetNum,
-                item.doubleJump and "  •  2x JUMP" or "")
-            row.badge.Text = eq and "DIPAKAI ✓" or "2x TAP"
-            row.badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
-            row.badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
         end
 
-        local vlist = newVList(holder, {
-            name = "ClothesListScroll",
-            rowH = 68, gap = 7, pad = 8,
-            size = UDim2.new(1, -20, 0, 330),
-            position = UDim2.new(0, 10, 0, 76),
-            makeRow = makeClothRow,
-            bind = bindClothRow,
+        grid = newVGrid(holder, {
+            name = "ClothesGrid",
+            cell = 72, gap = 8, pad = 8,
+            size = UDim2.new(1, -20, 0, 404),
+            position = UDim2.new(0, 10, 0, 248),
+            makeCell = makeCell,
+            bind = bindCell,
         })
 
-        -- Item dipakai: di BAWAH katalog, berupa grid kotak
-        local wornPanel = Instance.new("Frame")
-        wornPanel.Name = "WornBottomPanel"
-        wornPanel.Size = UDim2.new(1, -20, 0, 290)
-        wornPanel.Position = UDim2.new(0, 10, 0, 418)
-        wornPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-        wornPanel.BorderSizePixel = 0
-        wornPanel.Parent = holder
-        uiCorner(wornPanel, 8)
-        uiStroke(wornPanel, Color3.fromRGB(44, 48, 58), 1)
-
-        local statusDot = Instance.new("Frame")
-        statusDot.Size = UDim2.new(0, 8, 0, 8)
-        statusDot.Position = UDim2.new(0, 12, 0, 16)
-        statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
-        statusDot.BorderSizePixel = 0
-        statusDot.Parent = wornPanel
-        uiCorner(statusDot, 99)
-
-        local wornTitle = uiLabel(wornPanel, "ITEM DIPAKAI (0)", 12, Color3.fromRGB(230, 235, 245), UIFONT.bold)
-        wornTitle.Size = UDim2.new(1, -180, 0, 18)
-        wornTitle.Position = UDim2.new(0, 28, 0, 11)
-
-        local wornSub = uiLabel(wornPanel, "1x tap pada kotak = copot", 10, Color3.fromRGB(145, 185, 255), UIFONT.reg)
-        wornSub.Size = UDim2.new(1, -180, 0, 14)
-        wornSub.Position = UDim2.new(0, 28, 0, 29)
-
-        local unwearBtn = Instance.new("TextButton")
-        unwearBtn.Size = UDim2.new(0, 124, 0, 28)
-        unwearBtn.Position = UDim2.new(1, -132, 0, 10)
-        unwearBtn.BackgroundColor3 = Color3.fromRGB(52, 22, 28)
-        unwearBtn.AutoButtonColor = false
-        unwearBtn.TextSize = 10
-        unwearBtn.TextColor3 = Color3.fromRGB(255, 120, 130)
-        unwearBtn.Text = "× UNWEAR ALL"
-        lockFont(unwearBtn, UIFONT.bold)
-        unwearBtn.Parent = wornPanel
-        uiCorner(unwearBtn, 6)
-        uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
-        unwearBtn.Activated:Connect(function() scUnwearAll() end)
-
-        local wornScroll = Instance.new("ScrollingFrame")
-        wornScroll.Size = UDim2.new(1, -16, 1, -56)
-        wornScroll.Position = UDim2.new(0, 8, 0, 48)
-        wornScroll.BackgroundTransparency = 1
-        wornScroll.BorderSizePixel = 0
-        wornScroll.ScrollBarThickness = 4
-        wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
-        wornScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-        wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        wornScroll.CanvasSize = UDim2.new()
-        wornScroll.Parent = wornPanel
-
-        local wornGrid = Instance.new("UIGridLayout")
-        wornGrid.CellSize = UDim2.fromOffset(92, 104)
-        wornGrid.CellPadding = UDim2.fromOffset(8, 8)
-        wornGrid.SortOrder = Enum.SortOrder.LayoutOrder
-        wornGrid.Parent = wornScroll
+        -- ================= REFRESH BAR DIPAKAI =================
+        local lastWornTap = { slot = nil, t = 0 }
 
         local function refreshWornColumn()
             for _, ch in ipairs(wornScroll:GetChildren()) do
@@ -1506,18 +1640,17 @@ local function scMountEmbeddedBrowser()
             local entries = {}
             for slot, id in pairs(W) do
                 local dbIt = SC.DB[id]
-                if dbIt then
-                    entries[#entries + 1] = { slot = slot, id = id, name = dbIt.name or ("Item #" .. tostring(id)) }
-                end
+                if dbIt then entries[#entries + 1] = { slot = slot, id = id } end
             end
             table.sort(entries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
             statusDot.BackgroundColor3 = #entries > 0 and Color3.fromRGB(72, 199, 142) or Color3.fromRGB(120, 125, 140)
-            wornTitle.Text = string.format("ITEM DIPAKAI (%d)", #entries)
+            wornTitle.Text = string.format("DIPAKAI SEKARANG (%d)", #entries)
 
             for i, e in ipairs(entries) do
                 local isVis = SC.Ov[e.slot] ~= nil
                 local tile = Instance.new("TextButton")
                 tile.LayoutOrder = i
+                tile.Size = UDim2.fromOffset(66, 76)
                 tile.BackgroundColor3 = isVis and Color3.fromRGB(24, 36, 52) or Color3.fromRGB(26, 28, 36)
                 tile.AutoButtonColor = false
                 tile.Text = ""
@@ -1525,37 +1658,43 @@ local function scMountEmbeddedBrowser()
                 uiCorner(tile, 8)
                 local cs = uiStroke(tile, isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64), 1)
 
-                local iconHolder = Instance.new("Frame")
-                iconHolder.Size = UDim2.new(0, 60, 0, 60)
-                iconHolder.Position = UDim2.new(0.5, -30, 0, 8)
-                iconHolder.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
-                iconHolder.BorderSizePixel = 0
-                iconHolder.Parent = tile
-                uiCorner(iconHolder, 7)
-                scSetIcon(scMakeIcon(iconHolder, 3), e.id)
+                local ib = Instance.new("Frame")
+                ib.Size = UDim2.fromOffset(54, 54)
+                ib.Position = UDim2.new(0.5, -27, 0, 4)
+                ib.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+                ib.BorderSizePixel = 0
+                ib.Parent = tile
+                uiCorner(ib, 6)
+                scSetIcon(scMakeIcon(ib, 3), e.id)
 
-                local nameLbl = uiLabel(tile, e.name, 10, Color3.fromRGB(242, 244, 250), UIFONT.bold, Enum.TextXAlignment.Center)
-                nameLbl.Size = UDim2.new(1, -8, 0, 14)
-                nameLbl.Position = UDim2.new(0, 4, 0, 72)
-
-                local slotLbl = uiLabel(tile, tostring(e.slot):upper(), 9,
-                    isVis and Color3.fromRGB(115, 185, 255) or Color3.fromRGB(150, 155, 170), UIFONT.reg, Enum.TextXAlignment.Center)
-                slotLbl.Size = UDim2.new(1, -8, 0, 12)
-                slotLbl.Position = UDim2.new(0, 4, 0, 87)
+                local slotLbl = uiLabel(tile, tostring(e.slot):sub(1, 1):upper() .. tostring(e.slot):sub(2), 9,
+                    isVis and Color3.fromRGB(115, 185, 255) or Color3.fromRGB(165, 170, 185), UIFONT.med, Enum.TextXAlignment.Center)
+                slotLbl.Size = UDim2.new(1, -4, 0, 12)
+                slotLbl.Position = UDim2.new(0, 2, 1, -15)
 
                 tile.MouseEnter:Connect(function() cs.Color = Color3.fromRGB(235, 80, 90) end)
                 tile.MouseLeave:Connect(function()
                     cs.Color = isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64)
                 end)
-                tile.Activated:Connect(function() scRemoveSlot(e.slot) end)
+                tile.Activated:Connect(function()
+                    if WORN_TAPS <= 1 then
+                        scRemoveSlot(e.slot)
+                    else
+                        local now = os.clock()
+                        if lastWornTap.slot == e.slot and now - lastWornTap.t <= 0.5 then
+                            lastWornTap.slot = nil
+                            scRemoveSlot(e.slot)
+                        else
+                            lastWornTap.slot, lastWornTap.t = e.slot, now
+                        end
+                    end
+                end)
             end
         end
 
+        -- ================= FILTER =================
         local function applyFilter(toTop)
-            if not scBuildItems() then
-                countLabel.Text = "ItemDB kosong / belum ter-load."
-                return
-            end
+            if not scBuildItems() then return end
             local words = {}
             for w in string.gmatch(vnTrim(SC.SearchQuery):lower(), "%S+") do words[#words + 1] = w end
             local slotFilter = (SC.SelectedSlot or "All"):lower()
@@ -1576,14 +1715,15 @@ local function scMountEmbeddedBrowser()
                     if ok then out[#out + 1] = item end
                 end
             end
-            countLabel.Text = string.format("KATALOG %d ITEM  •  FILTER: %s  •  2x TAP = PAKAI",
-                #out, (SC.SelectedSlot or "All"):upper())
-            vlist:SetData(out, toTop)
+            grid:SetData(out, toTop)
         end
 
         local function refreshAll()
             refreshWornColumn()
-            vlist:Refresh()
+            grid:Refresh()
+            if selId and SC.DB and SC.DB[selId] and SC.ItemMap[selId] then
+                infoStatus.Visible = ((SC.Worn or {})[SC.ItemMap[selId].slot] == selId)
+            end
         end
 
         local filterToken = 0
@@ -3532,16 +3672,16 @@ if UI.Category then UI:Category("Set Clothes") end
 
 feature("Item", "Set Clothes")({
     center = center(function(c)
-        c:Header("Set Clothes & Visual Catalog", "Search bar di atas, Katalog (2x Tap Pakai), lalu Item Dipakai di bawahnya (1x Tap Copot)", "Client")
+        c:Header("Set Clothes & Visual Catalog", "Item dipakai sekarang, pencarian, dan katalog item visual", "Client")
 
         c:StatRow({
-            { Icon = "Check",  Label = "Katalog", Value = "2x Tap Pakai" },
-            { Icon = "Bolt",   Label = "Dipakai", Value = "1x Tap Copot" },
+            { Icon = "Check",  Label = "Katalog", Value = "Grid Kotak" },
+            { Icon = "Bolt",   Label = "Dipakai", Value = "Per Slot" },
             { Icon = "Shield", Label = "Efek & Visual", Value = "Dual-Method" }
         })
 
         local CatalogCard = c:Card("KATALOG VISUAL CLOTHES", nil, "Palette", {
-            Subtitle = "Filter kategori slot di bawah atau gunakan Search Bar di atas daftar pakaian"
+            Subtitle = "Filter kategori slot di bawah atau gunakan kolom cari di dalam katalog"
         })
         CatalogCard:Dropdown("Filter Kategori Slot (Mask, Head, Wing, dll)", "SC_SlotFilter", SC.Slots, "All", function(slotVal)
             SC.SelectedSlot = tostring(slotVal or "All")
