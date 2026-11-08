@@ -42,6 +42,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
 
+local MAX_CHAT = 120 -- batas karakter chat game
+
 local Spam = {
     Running = false,
     Sent = 0,
@@ -56,28 +58,55 @@ local function getValue(flag, fallback)
     return fallback
 end
 
--- Kirim pesan lewat client: otomatis deteksi TextChatService baru / Legacy Chat
+-- Cari kolom chat custom game ("Enter Message Here")
+local cachedBox
+local function findChatBox()
+    if cachedBox and cachedBox.Parent then return cachedBox end
+    local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    for _, v in ipairs(pg:GetDescendants()) do
+        if v:IsA("TextBox") and string.find(string.lower(v.PlaceholderText), "enter message") then
+            cachedBox = v
+            return v
+        end
+    end
+    return nil
+end
+
+-- Kirim chat: utama lewat kolom chat game, cadangan lewat chat bawaan Roblox
 local function sendChat(msg)
-    local ok = false
+    msg = string.sub(msg, 1, MAX_CHAT)
+
+    local box = findChatBox()
+    if box then
+        box.Text = msg
+        box:CaptureFocus()
+        task.wait()
+        box:ReleaseFocus(true) -- true = dianggap menekan Enter
+        if firesignal then
+            pcall(function() firesignal(box.FocusLost, true) end)
+        end
+        return true
+    end
 
     if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
         local channels = TextChatService:FindFirstChild("TextChannels")
         local general = channels and channels:FindFirstChild("RBXGeneral")
         if general then
-            ok = pcall(function() general:SendAsync(msg) end)
+            return pcall(function() general:SendAsync(msg) end)
         end
     else
         local events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
         local say = events and events:FindFirstChild("SayMessageRequest")
         if say then
-            ok = pcall(function() say:FireServer(msg, "All") end)
+            return pcall(function() say:FireServer(msg, "All") end)
         end
     end
 
-    return ok
+    return false
 end
 
--- Menyusun pesan: pilih mode urutan/acak + auto prefix on/off
+-- Susun pesan: Auto Prefix = ` + angka acak 1-9 (berganti tiap pesan)
 local function buildMessage()
     local raw = tostring(getValue("SpamMessage", "Hello!"))
     local lines = {}
@@ -97,15 +126,10 @@ local function buildMessage()
     end
 
     if getValue("AutoPrefix", false) then
-        local prefix = tostring(getValue("PrefixText", ""))
-        msg = prefix .. msg
+        msg = "`" .. tostring(math.random(1, 9)) .. msg
     end
 
-    if getValue("AutoCounter", false) then
-        msg = msg .. " #" .. tostring(Spam.Sent + 1)
-    end
-
-    return string.sub(msg, 1, 200) -- batas panjang chat Roblox
+    return string.sub(msg, 1, MAX_CHAT)
 end
 
 local function setButtonText(running)
@@ -156,7 +180,7 @@ if UI.Category then UI:Category("Spammer") end
 feature("Chat", "Chat Spam")({
     -- ---------------------------- TENGAH ----------------------------
     center = center(function(c)
-        c:Header("Chat Spammer", "Kirim chat otomatis via client dengan delay & prefix kustom", "Client")
+        c:Header("Chat Spammer", "Kirim chat otomatis via client dengan delay & prefix acak", "Client")
 
         c:StatRow({
             { Icon = "Bolt",   Label = "Mode",   Value = "Client Side" },
@@ -171,13 +195,11 @@ feature("Chat", "Chat Spam")({
         MsgCard:Dropdown("Mode Pesan", "SpamMode", { "Sequential", "Random" }, "Sequential")
 
         local PrefixCard = c:Card("Auto Prefix", nil, "Sliders", {
-            Subtitle = "Tambahkan teks otomatis di depan setiap pesan",
+            Subtitle = "Tambah ` + angka acak 1-9 di depan pesan (contoh: `4halo), berganti tiap kirim",
             ToggleFlag = "MasterPrefix",
             Default = false
         })
         PrefixCard:Toggle("Aktifkan Auto Prefix", "AutoPrefix", false)
-        PrefixCard:Input("Teks Prefix", "PrefixText", "Contoh: [SPAM] ", "[SPAM] ")
-        PrefixCard:Toggle("Auto Counter (#1, #2, ...)", "AutoCounter", false)
 
         local DelayCard = c:Card("Delay Spam", nil, "Clock", {
             Subtitle = "Jeda antar pesan (detik). Terlalu cepat bisa membuat chat di-rate-limit"
@@ -204,7 +226,7 @@ feature("Chat", "Chat Spam")({
         })
         InfoCard:ActivityTimeline({
             { Text = "Client-side chat sender siap",  Time = "Now" },
-            { Text = "TextChatService / Legacy auto-detect", Time = "Now" }
+            { Text = "Kolom chat game auto-detect",   Time = "Now" }
         })
         if InfoCard.Button then
             InfoCard:Button("Reset Counter", "RESET", "Check", function()
