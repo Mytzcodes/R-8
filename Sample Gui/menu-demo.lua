@@ -399,6 +399,7 @@ local SCFX = {
     Service = game:GetService("TweenService"),
     Running = setmetatable({}, { __mode = "k" }),
     KeepPinned = true, -- true = item aktif dari menu tetap dipakai walau game mengembalikan baju asli
+    SwapBounce = true, -- true = ganti item di slot yang sama dikirim 2 tahap (lepas lama -> pasang baru) supaya game pasti me-render item baru
 }
 
 function SCFX.Cancel(obj)
@@ -896,21 +897,143 @@ local function scUnhook()
     SC.WearTbl, SC.OrigWear, SC.MoveTbl, SC.OrigMove, SC.Hold = nil, nil, nil, nil, nil
 end
 
-local function scForceCharacterRedraw(prevFx)
-    local W = SC.Worn
-    if not W then return end
+-- =========================================================================
+-- [FIX CLIENT VISUAL v2]
+--  Akar masalah yang diperbaiki:
+--  1) "DIPAKAI SEKARANG" kosong  -> UI dulu membaca tabel worn milik game (SC.Worn) yang bisa
+--     basi/diganti game. Sekarang UI membaca STATE EFEKTIF = worn game + override visual kita (SC.Ov),
+--     dan referensi tabel worn di-relink otomatis dari upvalue game.
+--  2) Ganti item di slot sama baru "kepakai" setelah item lama dilepas -> dulu tabel worn diubah
+--     DULU baru onWear dipanggil, jadi game melihat "tidak ada perubahan". Sekarang worn dikembalikan
+--     ke kondisi sebelumnya, onWear dipanggil dengan set baru (game dapat diff asli), baru dikunci.
+--  3) Status hijau + bg kotak aktif permanen selama item masih ada di set (dasar: SC.Ov / worn efektif).
+-- =========================================================================
+local function scCopy(t)
+    local c = {}
+    for k, v in pairs(t) do c[k] = v end
+    return c
+end
 
-    local G = SC.State
-    local method = SC.ApplyMethod or "Dual Method (onWear + Direct GC)"
+local function scReplaceContents(dst, src)
+    pcall(function()
+        for k in pairs(dst) do
+            if src[k] == nil then dst[k] = nil end
+        end
+        for k, v in pairs(src) do dst[k] = v end
+    end)
+end
 
-    if (method == "Dual Method (onWear + Direct GC)" or method == "Method 1: Client onWear Callback") and SC.Game then
-        if type(SC.Game.onWear) == "function" then
-            local snapshot = {}
-            for k, v in pairs(W) do snapshot[k] = v end
-            pcall(SC.Game.onWear, snapshot)
-            for k, v in pairs(snapshot) do W[k] = v end
+-- Cari ulang tabel worn hidup dari upvalue onWear/refresh game (tabel bisa diganti game kapan saja)
+local function scRelinkWorn()
+    local G = SC.Game
+    if not G or type(debug) ~= "table" or type(debug.getupvalues) ~= "function" then
+        return SC.Worn
+    end
+    local cands, hasCur = {}, false
+    for _, fnName in ipairs({ "onWear", "refresh" }) do
+        local okF, fn = pcall(rawget, G, fnName)
+        if okF and type(fn) == "function" then
+            local okU, ups = pcall(debug.getupvalues, fn)
+            if okU and type(ups) == "table" then
+                for _, up in pairs(ups) do
+                    if type(up) == "table" and scLooksLikeWorn(up) then
+                        cands[#cands + 1] = up
+                        if up == SC.Worn then hasCur = true end
+                    end
+                end
+            end
         end
     end
+    if #cands == 0 then return SC.Worn end
+    if hasCur and next(SC.Worn) ~= nil then return SC.Worn end
+    for _, up in ipairs(cands) do
+        if next(up) ~= nil then
+            SC.Worn = up
+            return up
+        end
+    end
+    if hasCur then return SC.Worn end
+    SC.Worn = cands[1]
+    return SC.Worn
+end
+
+-- Slot ini sedang dipakai dengan item `id`? (override visual kita menang atas worn game)
+local function scIsWorn(slot, id)
+    local o = SC.Ov[slot]
+    if o then return o.vis == id end
+    local W = SC.Worn
+    return W ~= nil and W[slot] == id
+end
+
+-- State efektif = apa yang sebenarnya terlihat/dipakai pemain sekarang
+local function scEffective()
+    local eff = {}
+    local W = SC.Worn
+    if W then
+        for k, v in pairs(W) do eff[k] = v end
+    end
+    for slot, o in pairs(SC.Ov) do
+        if o.vis then eff[slot] = o.vis else eff[slot] = nil end
+    end
+    return eff
+end
+
+local function scGetWornSignature()
+    local eff = scEffective()
+    local parts = {}
+    for k, v in pairs(eff) do
+        parts[#parts + 1] = tostring(k) .. ":" .. tostring(v) .. (SC.Ov[k] and "*" or "")
+    end
+    table.sort(parts)
+    return table.concat(parts, "|")
+end
+
+-- Panggil onWear game dengan diff yang BENAR: worn dikembalikan ke `before`, onWear(set baru), lalu dikunci ke `after`.
+local function scCallOnWear(before, after)
+    local G = SC.Game
+    local method = SC.ApplyMethod or "Dual Method (onWear + Direct GC)"
+    if not (G and type(G.onWear) == "function") then return end
+    if not (method == "Dual Method (onWear + Direct GC)" or method == "Method 1: Client onWear Callback") then
+        return
+    end
+
+    local stages = {}
+    if SCFX.SwapBounce then
+        local mid, need = scCopy(after), false
+        for slot, b in pairs(before) do
+            local a = after[slot]
+            if b ~= nil and a ~= nil and a ~= b then
+                mid[slot] = nil
+                need = true
+            end
+        end
+        if need then stages[#stages + 1] = mid end
+    end
+    stages[#stages + 1] = after
+
+    local cur = before
+    for _, st in ipairs(stages) do
+        local W = scRelinkWorn()
+        if W then scReplaceContents(W, cur) end
+        pcall(G.onWear, scCopy(st))
+        W = scRelinkWorn()
+        if W then scReplaceContents(W, st) end
+        cur = st
+    end
+end
+
+local function scForceCharacterRedraw(prevFx, before, after)
+    if not scRelinkWorn() then return end
+
+    if before and after then
+        scCallOnWear(before, after)
+        local W2 = scRelinkWorn()
+        if W2 then scReplaceContents(W2, after) end
+    end
+
+    local W = SC.Worn
+    if not W then return end
+    local G = SC.State
 
     if G then
         if prevFx and type(G.effectsChanged) == "function" then
@@ -950,24 +1073,15 @@ local function scForceCharacterRedraw(prevFx)
     end
 end
 
-local function scGetWornSignature()
-    local W = SC.Worn
-    if not W then return "nil" end
-    local parts = {}
-    for k, v in pairs(W) do
-        parts[#parts + 1] = tostring(k) .. ":" .. tostring(v)
-    end
-    table.sort(parts)
-    return table.concat(parts, "|")
-end
-
 local function scMutate(fn)
     local W = scFindWorn()
     if not W then return end
+    W = scRelinkWorn() or W
     scHook()
 
-    local before = {}
-    for k, v in pairs(W) do before[k] = v end
+    local live = scCopy(W)          -- kondisi worn game sekarang (untuk diff onWear)
+    local before = scEffective()    -- kondisi yang terlihat pemain (untuk hitung override)
+    local after = scCopy(before)
 
     local G = SC.State
     local prevFx = nil
@@ -976,24 +1090,25 @@ local function scMutate(fn)
         if ok then prevFx = r end
     end
 
-    fn(W)
+    fn(after)
 
     local slots = {}
     for k in pairs(before) do slots[k] = true end
-    for k in pairs(W) do slots[k] = true end
+    for k in pairs(after) do slots[k] = true end
     for slot in pairs(slots) do
-        if W[slot] ~= before[slot] then
+        if after[slot] ~= before[slot] then
             local o = SC.Ov[slot]
             if not o then
-                o = { real = before[slot] }
+                o = { real = W[slot] }
                 SC.Ov[slot] = o
             end
-            o.vis = W[slot] or false
-            if o.real == W[slot] then SC.Ov[slot] = nil end
+            o.vis = after[slot] or false
+            o.strike = nil
+            if o.real == after[slot] then SC.Ov[slot] = nil end
         end
     end
 
-    scForceCharacterRedraw(prevFx)
+    scForceCharacterRedraw(prevFx, live, scEffective())
     SC.LastWornSignature = scGetWornSignature()
     if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
 end
@@ -1014,27 +1129,29 @@ local function scWearInto(W, id)
 end
 
 local function scKeepAlive()
-    local W = SC.Worn or scFindWorn()
-    if not W then return end
+    local W = scRelinkWorn() or SC.Worn or scFindWorn()
 
-    if next(SC.Ov) ~= nil then
+    if W and next(SC.Ov) ~= nil then
+        local live = scCopy(W)
         local changed = false
         for slot, o in pairs(SC.Ov) do
             local want = o.vis or nil
             local cur = W[slot]
-            if cur ~= want then
-                -- cur == o.real artinya game cuma mengembalikan baju asli -> pasang lagi (status aktif permanen).
-                -- cur lain (bukan asli, bukan pilihan kita) = player ganti baju sendiri -> lepas override.
-                if cur == nil or (SCFX.KeepPinned and cur == o.real) then
-                    W[slot] = want
-                    changed = true
-                else
-                    SC.Ov[slot] = nil
-                end
+            if cur == want then
+                o.strike = nil
+            elseif cur == nil or (SCFX.KeepPinned and cur == o.real) then
+                -- game mengembalikan baju asli / kosong -> pasang lagi (status aktif permanen)
+                o.strike = nil
+                changed = true
+            else
+                -- slot diisi item lain (pemain ganti baju sendiri). Dilepas hanya jika terjadi
+                -- 3x cek berturut-turut (~1 detik) supaya sinkronisasi sesaat dari server tidak menghapus set.
+                o.strike = (o.strike or 0) + 1
+                if o.strike >= 3 then SC.Ov[slot] = nil end
             end
         end
         if changed then
-            scForceCharacterRedraw()
+            scForceCharacterRedraw(nil, live, scEffective())
         end
     end
 
@@ -1106,7 +1223,7 @@ local function scWearOrToggleItem(id)
     local it = SC.DB[id]
     if not it or type(it.slot) ~= "string" then return end
 
-    if worn[it.slot] == id then
+    if scIsWorn(it.slot, id) then
         scRemoveSlot(it.slot)
     else
         scMutate(function(W)
@@ -1634,7 +1751,7 @@ local function scMountEmbeddedBrowser()
                 infoAct.Visible = false
                 return
             end
-            local eq = ((SC.Worn or {})[item.slot] == item.id)
+            local eq = scIsWorn(item.slot, item.id)
             local pal = eq and ACT_OFF or ACT_ON
             infoAct.Visible = true
             infoAct.Text = eq and "LEPAS" or "PAKAI"
@@ -1681,7 +1798,8 @@ local function scMountEmbeddedBrowser()
 
         -- ================= 4) GRID KATALOG (KOTAK) =================
         local COL_CELL, COL_CELL_H = Color3.fromRGB(20, 22, 28), Color3.fromRGB(29, 32, 42)
-        local COL_ACT, COL_ACT_H = Color3.fromRGB(22, 54, 40), Color3.fromRGB(28, 68, 50)
+        local COL_ACT, COL_ACT_H = Color3.fromRGB(26, 84, 58), Color3.fromRGB(32, 102, 70)
+        local COL_ICON, COL_ICON_ACT = Color3.fromRGB(14, 15, 20), Color3.fromRGB(14, 42, 31)
         local COL_ST, COL_ST_H = Color3.fromRGB(38, 42, 52), Color3.fromRGB(88, 95, 116)
         local COL_ST_ACT, COL_ST_SEL = Color3.fromRGB(60, 185, 115), Color3.fromRGB(235, 238, 250)
 
@@ -1713,6 +1831,7 @@ local function scMountEmbeddedBrowser()
             iconBg.BorderSizePixel = 0
             iconBg.Parent = card
             uiCorner(iconBg, 6)
+            c.iconBg = iconBg
             c.icon = scMakeIcon(iconBg, 3)
 
             local mark = Instance.new("Frame")
@@ -1724,6 +1843,7 @@ local function scMountEmbeddedBrowser()
             mark.ZIndex = 6
             mark.Parent = card
             uiCorner(mark, 99)
+            uiStroke(mark, Color3.fromRGB(10, 30, 22), 1.5)
             c.mark = mark
 
             -- Satu fungsi gaya: status aktif (bg hijau + dot) PERMANEN selama item dipakai,
@@ -1735,16 +1855,19 @@ local function scMountEmbeddedBrowser()
                 local stc = sel and COL_ST_SEL or (eq and COL_ST_ACT or (c.hover and COL_ST_H or COL_ST))
                 local th = sel and 2 or (eq and 1.5 or 1)
                 local sc = c.press and 0.93 or (c.hover and 1.07 or 1)
-                local mk = eq and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0)
+                local mk = eq and UDim2.fromOffset(12, 12) or UDim2.fromOffset(0, 0)
+                local ibg = eq and COL_ICON_ACT or COL_ICON
                 card.ZIndex = c.hover and 3 or 1
                 if animate then
                     SCFX.Tween(card, 0.16, { BackgroundColor3 = bg })
+                    SCFX.Tween(c.iconBg, 0.16, { BackgroundColor3 = ibg })
                     SCFX.Tween(c.stroke, 0.16, { Color = stc, Thickness = th })
                     SCFX.Tween(c.scale, c.press and 0.07 or 0.14, { Scale = sc })
                     SCFX.Tween(mark, eq and 0.26 or 0.14, { Size = mk },
                         eq and Enum.EasingStyle.Back or Enum.EasingStyle.Quad)
                 else
                     SCFX.Set(card, { BackgroundColor3 = bg })
+                    SCFX.Set(c.iconBg, { BackgroundColor3 = ibg })
                     SCFX.Set(c.stroke, { Color = stc, Thickness = th })
                     SCFX.Set(c.scale, { Scale = sc })
                     SCFX.Set(mark, { Size = mk })
@@ -1776,9 +1899,8 @@ local function scMountEmbeddedBrowser()
 
         local function bindCell(c, item)
             if not item then return end
-            local W = SC.Worn or {}
             local sameItem = (c.boundId == item.id)
-            c.eq = (W[item.slot] == item.id)
+            c.eq = scIsWorn(item.slot, item.id)
             c.sel = (selId == item.id)
             if not sameItem then
                 -- kotak didaur ulang saat scroll (item beda): set langsung tanpa animasi
@@ -1896,8 +2018,9 @@ local function scMountEmbeddedBrowser()
         end
 
         local function refreshWornColumn()
+            scRelinkWorn()
             local W = SC.Worn or scFindWorn()
-            if not W or not SC.DB then
+            if not SC.DB or (not W and next(SC.Ov) == nil) then
                 SCFX.Tween(statusDot, 0.2, { BackgroundColor3 = Color3.fromRGB(240, 170, 60) })
                 wornTitle.Text = "BELUM TERHUBUNG (masuk World dulu)"
                 for slot in pairs(wornTiles) do dropWornTile(slot) end
@@ -1905,7 +2028,7 @@ local function scMountEmbeddedBrowser()
                 return
             end
             local entries = {}
-            for slot, id in pairs(W) do
+            for slot, id in pairs(scEffective()) do
                 local dbIt = SC.DB[id]
                 if dbIt then entries[#entries + 1] = { slot = slot, id = id } end
             end
@@ -1988,6 +2111,7 @@ local function scMountEmbeddedBrowser()
         end
 
         local function refreshAll()
+            scRelinkWorn()
             refreshWornColumn()
             grid:Refresh()
             syncInfo()
