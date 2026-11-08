@@ -66,7 +66,7 @@ local function notifyClient(title, text, duration)
         StarterGui:SetCore("SendNotification", {
             Title = title or "R&8_DV",
             Text = text or "",
-            Duration = duration or 5
+            Duration = duration or 4
         })
     end)
     print(string.format("[%s] %s", title or "R&8_DV", text or ""))
@@ -187,6 +187,7 @@ local Light = { Orig = setmetatable({}, { __mode = "k" }), Conns = {}, Roots = {
 
 local function lightOne(d)
     if not (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) then return end
+    if d:GetAttribute("R8DV_SkipLight") then return end
     pcall(function()
         local ff = d.FontFace
         if ff and ff.Weight.Value >= 700 then
@@ -392,19 +393,22 @@ task.spawn(function()
 end)
 
 -- =========================================================================
--- LOGIKA SET CLOTHES + ASSET RESOLVER + IN-GUI SCROLLABLE LISTCARD
---  * Memperbaiki pakaian tidak muncul dengan multi-stage GC & PlayerSprite fallback
---  * Ekstraksi gambar rbxassetid dari ItemDB, ItemIcon, ClothesDB, dan Assets
---  * ListCard di-inject langsung ke dalam Card R&8_DV (tanpa bikin jendela baru)
---  * Double-tap item untuk langsung pakai / lepas, Search & Filter Slot
---  * Shortcut Unwear All & daftar pakaian dipakai secara real-time di dalam GUI
+-- LOGIKA SET CLOTHES + DEEP TEXTURE/SPRITESHEET RESOLVER + REDESIGNED UI
+--  * Memperbaiki gambar rbxassetid yang tidak muncul dengan memanggil langsung
+--    konstruktor/fungsi asli ReplicatedStorage.Shared.ItemIcon + ekstraksi
+--    upvalue sheet dari ItemIcon, ClothesDB (Part1..Part5), dan Assets.
+--  * Bar "Pakaian Dipakai Saat Ini" diperbagus: tampil sebagai kartu mini
+--    dengan gambar ikon item + nama + slot, dan cukup 1x TAP untuk langsung copot!
+--  * Tombol UNWEAR ALL dirombak menjadi tombol pill modern yang proporsional & elegan.
 -- =========================================================================
 local SC = {
     DB = nil,
     ClothesDB = nil,
     ItemIcon = nil,
     Assets = nil,
+    DiscoveredSheets = {},
     Items = nil,
+    ItemMap = {},
     Slots = { "All" },
     Worn = nil,
     Game = nil,
@@ -419,29 +423,37 @@ local SC = {
     SearchQuery = "",
     SelectedSlot = "All",
     UpdateUIFn = nil,
+    RefreshWornBarFn = nil,
     LastTapId = nil,
     LastTapTime = 0,
+    LastWornSignature = "",
 }
 
 local SC_JUMP_MODES = { "Tahan paket (disarankan)", "Samarkan flag saja", "Mati" }
 
+local KNOWN_SLOTS = {
+    hair = true, head = true, mask = true, face = true, eyes = true,
+    chest = true, shirt = true, pants = true, shoes = true, feet = true,
+    back = true, wing = true, wings = true, neck = true, hand = true,
+    aura = true, pet = true, hat = true, ride = true, artifact = true,
+    waist = true, ancestral = true,legs = true, body = true, Beard = true, beard = true
+}
+
 local function scLooksLikeWorn(t)
     if type(t) ~= "table" then return false end
-    local count = 0
-    local validSlots = {
-        hair = true, head = true, mask = true, face = true, eyes = true,
-        chest = true, shirt = true, pants = true, shoes = true, feet = true,
-        back = true, wing = true, wings = true, neck = true, hand = true,
-        aura = true, pet = true, hat = true,ride = true, artifact = true
-    }
+    if rawget(t, "onWear") ~= nil or rawget(t, "refresh") ~= nil or rawget(t, "call") ~= nil then
+        return false
+    end
+    local hasSlotKey = false
     for k, v in pairs(t) do
         if type(k) ~= "string" or type(v) ~= "number" then return false end
-        count += 1
+        if KNOWN_SLOTS[k] or KNOWN_SLOTS[k:lower()] then
+            hasSlotKey = true
+        end
     end
-    return true
+    return hasSlotKey or next(t) == nil
 end
 
--- Pencarian agresif tabel worn & fungsi render karakter (memperbaiki bug visual tidak muncul)
 local function scFindWorn()
     if SC.Worn and SC.Game then return SC.Worn end
     local sh = ReplicatedStorage:FindFirstChild("Shared")
@@ -449,153 +461,417 @@ local function scFindWorn()
         pcall(function() SC.PlayerSprite = require(sh:FindFirstChild("PlayerSprite")) end)
     end
 
-    if type(getgc) ~= "function" then
-        return nil, "Executor tidak mendukung getgc"
+    if type(getgc) ~= "function" or type(debug) ~= "table" or type(debug.getupvalues) ~= "function" then
+        return nil, "Executor tidak mendukung getgc / debug.getupvalues"
     end
 
     local okGc, gc = pcall(getgc, true)
     if not okGc or type(gc) ~= "table" then return nil, "getgc gagal" end
 
+    local fallbackGame, fallbackState, fallbackWorn
+
     for _, obj in ipairs(gc) do
         if type(obj) == "table" then
-            local okWear, fnWear = pcall(rawget, obj, "onWear")
-            local okRef, fnRef = pcall(rawget, obj, "refresh")
-            if (okWear and type(fnWear) == "function") or (okRef and type(fnRef) == "function") then
-                local targetFn = (type(fnWear) == "function" and fnWear) or fnRef
-                if type(debug) == "table" and type(debug.getupvalues) == "function" then
-                    local okU, ups = pcall(debug.getupvalues, targetFn)
-                    if okU and type(ups) == "table" then
-                        local worn, state
-                        for _, up in pairs(ups) do
-                            if type(up) == "table" then
-                                if not worn and scLooksLikeWorn(up) and rawget(up, "onWear") == nil then
-                                    worn = up
-                                end
-                                if not state and (type(rawget(up, "call")) == "function" or type(rawget(up, "effects")) == "function") then
-                                    state = up
-                                end
-                            end
-                        end
-                        if worn then
-                            SC.Game, SC.State, SC.Worn = obj, state, worn
-                            return worn
-                        end
-                    end
-                end
-                local directWorn = rawget(obj, "worn") or rawget(obj, "Worn") or rawget(obj, "equipped")
-                if type(directWorn) == "table" and scLooksLikeWorn(directWorn) then
-                    SC.Game, SC.Worn = obj, directWorn
-                    return directWorn
-                end
-            end
-        end
-    end
-
-    -- Fallback: cari di upvalues semua fungsi GC yang memegang referensi refresh + worn
-    if type(debug) == "table" and type(debug.getupvalues) == "function" then
-        for _, fn in ipairs(gc) do
-            if type(fn) == "function" and not is_synapse_function and true then
+            local okF, fn = pcall(rawget, obj, "onWear")
+            local okR, fnR = pcall(rawget, obj, "refresh")
+            if okF and type(fn) == "function" then
                 local okU, ups = pcall(debug.getupvalues, fn)
                 if okU and type(ups) == "table" then
-                    local hasGame, foundWorn, foundState
+                    local worn, state
                     for _, up in pairs(ups) do
                         if type(up) == "table" then
-                            if type(rawget(up, "refresh")) == "function" and type(rawget(up, "onWear")) == "function" then
-                                hasGame = up
-                            elseif scLooksLikeWorn(up) and next(up) ~= nil then
-                                foundWorn = up
-                            elseif type(rawget(up, "effects")) == "function" then
-                                foundState = up
+                            if scLooksLikeWorn(up) then
+                                if next(up) ~= nil then
+                                    worn = up
+                                elseif not worn then
+                                    worn = up
+                                end
+                            end
+                            if not state and (type(rawget(up, "call")) == "function" or type(rawget(up, "effects")) == "function") then
+                                state = up
                             end
                         end
                     end
-                    if hasGame and foundWorn then
-                        SC.Game, SC.State, SC.Worn = hasGame, foundState, foundWorn
-                        return foundWorn
+                    if not worn and type(fnR) == "function" then
+                        local okUR, upsR = pcall(debug.getupvalues, fnR)
+                        if okUR and type(upsR) == "table" then
+                            for _, up in pairs(upsR) do
+                                if type(up) == "table" and scLooksLikeWorn(up) then
+                                    worn = up
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if worn then
+                        if next(worn) ~= nil then
+                            SC.Game, SC.State, SC.Worn = obj, state, worn
+                            return worn
+                        elseif not fallbackWorn then
+                            fallbackGame, fallbackState, fallbackWorn = obj, state, worn
+                        end
                     end
                 end
             end
         end
     end
 
-    return nil, "Tabel pakaian belum ter-load, pastikan karakter sudah spawn di dalam world"
-end
-
--- Resolusi gambar rbxassetid & rect offset dari modul game
-local function scFormatAsset(val)
-    if type(val) == "number" then
-        return "rbxassetid://" .. tostring(val), nil, nil
-    elseif type(val) == "string" then
-        if val:find("^rbxassetid://") or val:find("^rbxthumb://") or val:find("^http") then
-            return val, nil, nil
-        elseif val:match("^%d+$") then
-            return "rbxassetid://" .. val, nil, nil
-        end
-    elseif type(val) == "table" then
-        local img = val.image or val.Image or val.icon or val.Icon or val.texture or val.Texture or val.asset or val.id or val[1]
-        local ro = val.rectOffset or val.ImageRectOffset or val.offset
-        local rs = val.rectSize or val.ImageRectSize or val.size
-        local formatted = scFormatAsset(img)
-        if formatted then return formatted, ro, rs end
+    if fallbackWorn then
+        SC.Game, SC.State, SC.Worn = fallbackGame, fallbackState, fallbackWorn
+        return fallbackWorn
     end
-    return nil, nil, nil
+
+    return nil, "Tabel pakaian belum ditemukan (pastikan sudah masuk ke dalam world)"
 end
 
-local function scResolveItemIcon(id, it)
-    if SC.ItemIcon then
-        if type(SC.ItemIcon) == "function" then
-            local ok, res, ro, rs = pcall(SC.ItemIcon, id)
-            if ok and res then
-                local img, rOffset, rSize = scFormatAsset(res)
-                if img then return img, ro or rOffset, rs or rSize end
+-- Normalisasi string rbxassetid
+local function normalizeAssetId(raw)
+    if type(raw) == "number" and raw > 0 then
+        return "rbxassetid://" .. tostring(raw)
+    elseif type(raw) == "string" then
+        raw = vnTrim(raw)
+        if raw:find("^rbxassetid://%d+") or raw:find("^rbxthumb://") or raw:find("^http") then
+            return raw
+        end
+        local digits = raw:match("(%d%d%d%d%d+)")
+        if digits then
+            return "rbxassetid://" .. digits
+        end
+    end
+    return nil
+end
+
+-- Scan semua string rbxassetid di dalam tabel / upvalues modul (ItemIcon, Assets, ClothesDB)
+local function scanTableForAssets(tbl, out, visited, depth)
+    if type(tbl) ~= "table" or (depth or 0) > 4 then return end
+    visited = visited or {}
+    if visited[tbl] then return end
+    visited[tbl] = true
+
+    for k, v in pairs(tbl) do
+        if type(v) == "string" or type(v) == "number" then
+            local aid = normalizeAssetId(v)
+            if aid then
+                out[tostring(k):lower()] = aid
+                out[#out + 1] = aid
             end
-        elseif type(SC.ItemIcon) == "table" then
-            local fn = SC.ItemIcon.get or SC.ItemIcon.Get or SC.ItemIcon.getIcon or SC.ItemIcon.icon or SC.ItemIcon.resolve
-            if type(fn) == "function" then
-                local ok, res, ro, rs = pcall(fn, id)
-                if not ok or not res then ok, res, ro, rs = pcall(fn, SC.ItemIcon, id) end
-                if ok and res then
-                    local img, rOffset, rSize = scFormatAsset(res)
-                    if img then return img, ro or rOffset, rs or rSize end
+        elseif type(v) == "table" then
+            scanTableForAssets(v, out, visited, (depth or 0) + 1)
+        end
+    end
+end
+
+local function scanFunctionUpvaluesForAssets(fn, out, visited, depth)
+    if type(fn) ~= "function" or (depth or 0) > 3 then return end
+    visited = visited or {}
+    if visited[fn] then return end
+    visited[fn] = true
+
+    if type(debug) == "table" and type(debug.getupvalues) == "function" then
+        local ok, ups = pcall(debug.getupvalues, fn)
+        if ok and type(ups) == "table" then
+            for k, v in pairs(ups) do
+                if type(v) == "string" or type(v) == "number" then
+                    local aid = normalizeAssetId(v)
+                    if aid then
+                        out[tostring(k):lower()] = aid
+                        out[#out + 1] = aid
+                    end
+                elseif type(v) == "table" then
+                    scanTableForAssets(v, out, visited, (depth or 0) + 1)
+                elseif type(v) == "function" then
+                    scanFunctionUpvaluesForAssets(v, out, visited, (depth or 0) + 1)
                 end
             end
-            if SC.ItemIcon[id] then
-                local img, ro, rs = scFormatAsset(SC.ItemIcon[id])
-                if img then return img, ro, rs end
+        end
+    end
+    if type(debug) == "table" and type(debug.getconstants) == "function" then
+        local ok, consts = pcall(debug.getconstants, fn)
+        if ok and type(consts) == "table" then
+            for _, v in pairs(consts) do
+                if type(v) == "string" then
+                    local aid = normalizeAssetId(v)
+                    if aid then out[#out + 1] = aid end
+                end
+            end
+        end
+    end
+end
+
+-- Ekstrak data texture (image, rectOffset, rectSize) dari berbagai kemungkinan struktur data item
+local function extractTextureInfoFromTable(tbl)
+    if type(tbl) ~= "table" then return nil, nil, nil end
+
+    local rawImg = tbl.image or tbl.Image or tbl.icon or tbl.Icon or tbl.texture or tbl.Texture
+        or tbl.asset or tbl.Asset or tbl.sheet or tbl.Sheet or tbl.atlas or tbl.decal or tbl.id or tbl[1]
+    local img = normalizeAssetId(rawImg)
+
+    local ro = tbl.rectOffset or tbl.ImageRectOffset or tbl.offset or tbl.uv or tbl.pos
+    local rs = tbl.rectSize or tbl.ImageRectSize or tbl.size or tbl.dim
+
+    if type(ro) == "table" then
+        local rx = ro.X or ro.x or ro[1]
+        local ry = ro.Y or ro.y or ro[2]
+        if type(rx) == "number" and type(ry) == "number" then ro = Vector2.new(rx, ry) else ro = nil end
+    elseif typeof(ro) ~= "Vector2" then
+        ro = nil
+    end
+
+    if type(rs) == "table" then
+        local sx = rs.X or rs.x or rs.w or rs[1]
+        local sy = rs.Y or rs.y or rs.h or rs[2]
+        if type(sx) == "number" and type(sy) == "number" then rs = Vector2.new(sx, sy) else rs = nil end
+    elseif type(rs) == "number" then
+        rs = Vector2.new(rs, rs)
+    elseif typeof(rs) ~= "Vector2" then
+        rs = nil
+    end
+
+    -- Jika tabel punya koordinat grid (x, y / tx, ty / col, row) untuk spritesheet 32x32 atau 16x16
+    if not ro then
+        local gx = tbl.tx or tbl.ix or tbl.col or tbl.gridX or (type(tbl.x) == "number" and tbl.x)
+        local gy = tbl.ty or tbl.iy or tbl.row or tbl.gridY or (type(tbl.y) == "number" and tbl.y)
+        local tileSz = tbl.tileSize or tbl.cellSize or tbl.size or 32
+        if type(tileSz) ~= "number" then tileSz = 32 end
+        if type(gx) == "number" and type(gy) == "number" then
+            if gx < 64 and gy < 64 then
+                ro = Vector2.new(gx * tileSz, gy * tileSz)
+                rs = rs or Vector2.new(tileSz, tileSz)
+            else
+                ro = Vector2.new(gx, gy)
+                rs = rs or Vector2.new(tileSz, tileSz)
             end
         end
     end
 
-    for _, k in ipairs({ "icon", "image", "assetId", "texture", "sprite", "tex", "img", "decal" }) do
-        if it[k] then
-            local img, ro, rs = scFormatAsset(it[k])
-            if img then return img, ro, rs end
+    return img, ro, rs
+end
+
+-- Pasang ikon item langsung ke container menggunakan modul asli `ItemIcon` atau data hasil ekstraksi
+local function scRenderItemIconInto(containerFrame, item)
+    if not containerFrame or not item then return "rbxassetid://0" end
+
+    for _, ch in ipairs(containerFrame:GetChildren()) do
+        if not ch:IsA("UICorner") and not ch:IsA("UIStroke") then
+            ch:Destroy()
         end
     end
 
+    local targetImg = Instance.new("ImageLabel")
+    targetImg.Name = "ItemTex"
+    targetImg.Size = UDim2.new(1, -6, 1, -6)
+    targetImg.Position = UDim2.new(0, 3, 0, 3)
+    targetImg.BackgroundTransparency = 1
+    targetImg.ScaleType = Enum.ScaleType.Fit
+    targetImg.ResampleMode = Enum.ResamplerMode.Pixelated
+    targetImg.Image = "rbxassetid://0"
+    targetImg.Parent = containerFrame
+
+    local appliedAsset = nil
+
+    -- 1. Coba panggil modul `ItemIcon` asli milik game (mendukung semua pola fungsi/tabel)
+    local II = SC.ItemIcon
+    if II then
+        if type(II) == "function" then
+            -- Pola A: ItemIcon(targetImg, itemId) atau ItemIcon(containerFrame, itemId)
+            local ok1, res1, rOff1, rSz1 = pcall(II, targetImg, item.id)
+            if ok1 and targetImg.Image ~= "" and targetImg.Image ~= "rbxassetid://0" then
+                appliedAsset = targetImg.Image
+            elseif ok1 and typeof(res1) == "Instance" then
+                pcall(function()
+                    res1.Parent = containerFrame
+                    if res1:IsA("GuiObject") then
+                        res1.Size = UDim2.new(1, -4, 1, -4)
+                        res1.Position = UDim2.new(0, 2, 0, 2)
+                    end
+                    local il = res1:IsA("ImageLabel") and res1 or res1:FindFirstChildWhichIsA("ImageLabel", true)
+                    if il then
+                        appliedAsset = il.Image
+                        targetImg:Destroy()
+                    end
+                end)
+            else
+                -- Pola B: ItemIcon(itemId) atau ItemIcon(item.raw)
+                local ok2, res2, rOff2, rSz2 = pcall(II, item.id)
+                if not ok2 or not res2 then ok2, res2, rOff2, rSz2 = pcall(II, item.raw) end
+                if ok2 and res2 then
+                    if typeof(res2) == "Instance" then
+                        pcall(function()
+                            res2.Parent = containerFrame
+                            if res2:IsA("GuiObject") then
+                                res2.Size = UDim2.new(1, -4, 1, -4)
+                                res2.Position = UDim2.new(0, 2, 0, 2)
+                            end
+                            local il = res2:IsA("ImageLabel") and res2 or res2:FindFirstChildWhichIsA("ImageLabel", true)
+                            if il then
+                                appliedAsset = il.Image
+                                targetImg:Destroy()
+                            end
+                        end)
+                    elseif type(res2) == "table" then
+                        local eImg, eRo, eRs = extractTextureInfoFromTable(res2)
+                        if eImg then
+                            targetImg.Image = eImg
+                            if eRo then targetImg.ImageRectOffset = eRo end
+                            if eRs then targetImg.ImageRectSize = eRs end
+                            appliedAsset = eImg
+                        end
+                    elseif type(res2) == "string" or type(res2) == "number" then
+                        local aid = normalizeAssetId(res2)
+                        if aid then
+                            targetImg.Image = aid
+                            if typeof(rOff2) == "Vector2" then targetImg.ImageRectOffset = rOff2 end
+                            if typeof(rSz2) == "Vector2" then targetImg.ImageRectSize = rSz2 end
+                            appliedAsset = aid
+                        end
+                    end
+                end
+            end
+        elseif type(II) == "table" then
+            for _, fnName in ipairs({ "apply", "Apply", "set", "Set", "render", "Render", "update", "Update", "mount" }) do
+                local fn = II[fnName]
+                if type(fn) == "function" and not appliedAsset then
+                    pcall(fn, targetImg, item.id)
+                    if targetImg.Image == "" or targetImg.Image == "rbxassetid://0" then
+                        pcall(fn, II, targetImg, item.id)
+                    end
+                    if targetImg.Image == "" or targetImg.Image == "rbxassetid://0" then
+                        pcall(fn, targetImg, item.raw)
+                    end
+                    if targetImg.Image ~= "" and targetImg.Image ~= "rbxassetid://0" then
+                        appliedAsset = targetImg.Image
+                        break
+                    end
+                    local childImg = containerFrame:FindFirstChildWhichIsA("ImageLabel", true)
+                    if childImg and childImg ~= targetImg and childImg.Image ~= "" then
+                        appliedAsset = childImg.Image
+                        targetImg:Destroy()
+                        break
+                    end
+                end
+            end
+
+            if not appliedAsset then
+                for _, fnName in ipairs({ "get", "Get", "getIcon", "GetIcon", "icon", "Icon", "new", "create", "Create", "resolve" }) do
+                    local fn = II[fnName]
+                    if type(fn) == "function" then
+                        local ok, res, rOff, rSz = pcall(fn, item.id)
+                        if not ok or not res then ok, res, rOff, rSz = pcall(fn, II, item.id) end
+                        if not ok or not res then ok, res, rOff, rSz = pcall(fn, item.raw) end
+                        if ok and res then
+                            if typeof(res) == "Instance" then
+                                pcall(function()
+                                    res.Parent = containerFrame
+                                    if res:IsA("GuiObject") then
+                                        res.Size = UDim2.new(1, -4, 1, -4)
+                                        res.Position = UDim2.new(0, 2, 0, 2)
+                                    end
+                                    local il = res:IsA("ImageLabel") and res or res:FindFirstChildWhichIsA("ImageLabel", true)
+                                    if il then appliedAsset = il.Image; targetImg:Destroy() end
+                                end)
+                                if appliedAsset then break end
+                            elseif type(res) == "table" then
+                                local eImg, eRo, eRs = extractTextureInfoFromTable(res)
+                                if eImg then
+                                    targetImg.Image = eImg
+                                    if eRo then targetImg.ImageRectOffset = eRo end
+                                    if eRs then targetImg.ImageRectSize = eRs end
+                                    appliedAsset = eImg
+                                    break
+                                end
+                            elseif type(res) == "string" or type(res) == "number" then
+                                local aid = normalizeAssetId(res)
+                                if aid then
+                                    targetImg.Image = aid
+                                    if typeof(rOff) == "Vector2" then targetImg.ImageRectOffset = rOff end
+                                    if typeof(rSz) == "Vector2" then targetImg.ImageRectSize = rSz end
+                                    appliedAsset = aid
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Jika belum dapat dari fungsi ItemIcon, gunakan pre-resolved icon & rect dari ItemDB / ClothesDB / Assets
+    if not appliedAsset and targetImg and targetImg.Parent then
+        if item.icon and item.icon ~= "rbxassetid://0" then
+            targetImg.Image = item.icon
+            if typeof(item.rectOffset) == "Vector2" then targetImg.ImageRectOffset = item.rectOffset end
+            if typeof(item.rectSize) == "Vector2" then targetImg.ImageRectSize = item.rectSize end
+            appliedAsset = item.icon
+        end
+    end
+
+    if appliedAsset and appliedAsset ~= "rbxassetid://0" then
+        item.icon = appliedAsset
+        item.assetNum = tostring(appliedAsset):match("(%d+)") or item.assetNum
+    end
+
+    return appliedAsset or item.icon or "rbxassetid://0"
+end
+
+local function scResolveStaticItemTexture(id, it)
+    -- Cek langsung di tabel ItemDB[id]
+    local img, ro, rs = extractTextureInfoFromTable(it)
+    if img then return img, ro, rs end
+
+    -- Cek di ClothesDB (termasuk sub-tabel slot atau ID)
     if type(SC.ClothesDB) == "table" then
-        local cEntry = SC.ClothesDB[id] or SC.ClothesDB[it.name]
-        if cEntry then
-            local img, ro, rs = scFormatAsset(cEntry)
-            if img then return img, ro, rs end
-            if type(cEntry) == "table" then
-                for _, v in pairs(cEntry) do
-                    local subImg, sRo, sRs = scFormatAsset(v)
-                    if subImg then return subImg, sRo, sRs end
+        local cEntry = SC.ClothesDB[id] or SC.ClothesDB[tostring(id)] or SC.ClothesDB[it.name]
+            or (it.slot and SC.ClothesDB[it.slot] and (SC.ClothesDB[it.slot][id] or SC.ClothesDB[it.slot][it.name]))
+        if type(cEntry) == "table" then
+            local cImg, cRo, cRs = extractTextureInfoFromTable(cEntry)
+            if cImg then return cImg, cRo or ro, cRs or rs end
+            for _, sub in pairs(cEntry) do
+                if type(sub) == "table" then
+                    local sImg, sRo, sRs = extractTextureInfoFromTable(sub)
+                    if sImg then return sImg, sRo or cRo or ro, sRs or cRs or rs end
+                elseif type(sub) == "string" or type(sub) == "number" then
+                    local aid = normalizeAssetId(sub)
+                    if aid then return aid, cRo or ro, cRs or rs end
+                end
+            end
+        elseif type(cEntry) == "string" or type(cEntry) == "number" then
+            local aid = normalizeAssetId(cEntry)
+            if aid then return aid, ro, rs end
+        end
+    end
+
+    -- Cek di Assets
+    if type(SC.Assets) == "table" then
+        for _, key in ipairs({ it.name, id, tostring(id), it.tex, it.sheet, it.icon, it.slot }) do
+            if key and SC.Assets[key] then
+                local aVal = SC.Assets[key]
+                if type(aVal) == "table" then
+                    local aImg, aRo, aRs = extractTextureInfoFromTable(aVal)
+                    if aImg then return aImg, aRo or ro, aRs or rs end
+                else
+                    local aid = normalizeAssetId(aVal)
+                    if aid then return aid, ro, rs end
                 end
             end
         end
     end
 
-    if type(SC.Assets) == "table" then
-        local aEntry = SC.Assets[it.name] or SC.Assets[id] or (it.tex and SC.Assets[it.tex]) or (it.sprite and SC.Assets[it.sprite])
-        if aEntry then
-            local img, ro, rs = scFormatAsset(aEntry)
-            if img then return img, ro, rs end
-        end
+    -- Jika item memiliki koordinat sprite (`ro`) atau `page`/`sheet` index, pasangkan dengan sheet dari DiscoveredSheets
+    local sheetIdx = tonumber(it.sheet or it.page or it.atlas or 1) or 1
+    local fallbackSheet = SC.DiscoveredSheets[tostring(it.sheet or ""):lower()]
+        or SC.DiscoveredSheets[tostring(it.slot or ""):lower()]
+        or SC.DiscoveredSheets["icons"]
+        or SC.DiscoveredSheets["items"]
+        or SC.DiscoveredSheets["clothes"]
+        or SC.DiscoveredSheets[sheetIdx]
+        or SC.DiscoveredSheets[1]
+
+    if fallbackSheet then
+        return fallbackSheet, ro, rs
     end
 
-    return "rbxassetid://0", nil, nil
+    return "rbxassetid://0", ro, rs
 end
 
 local function scBuildItems()
@@ -611,19 +887,40 @@ local function scBuildItems()
     pcall(function() SC.Assets = require(sh:FindFirstChild("Assets")) end)
     pcall(function() SC.PlayerSprite = require(sh:FindFirstChild("PlayerSprite")) end)
 
+    -- Kumpulkan semua sheet rbxassetid dari ItemIcon, Assets, dan ClothesDB (termasuk Part1..Part5)
+    SC.DiscoveredSheets = {}
+    if type(SC.ItemIcon) == "function" then
+        scanFunctionUpvaluesForAssets(SC.ItemIcon, SC.DiscoveredSheets)
+    elseif type(SC.ItemIcon) == "table" then
+        scanTableForAssets(SC.ItemIcon, SC.DiscoveredSheets)
+        for _, v in pairs(SC.ItemIcon) do
+            if type(v) == "function" then
+                scanFunctionUpvaluesForAssets(v, SC.DiscoveredSheets)
+            end
+        end
+    end
+    if type(SC.Assets) == "table" then
+        scanTableForAssets(SC.Assets, SC.DiscoveredSheets)
+    end
+    if type(SC.ClothesDB) == "table" then
+        scanTableForAssets(SC.ClothesDB, SC.DiscoveredSheets)
+    end
+
     local items = {}
+    local itemMap = {}
     local slotMap = {}
 
     for id, it in pairs(DB) do
         if type(id) == "number" and type(it) == "table" then
             local isCloth = (it.kind == "cloth" or it.kind == "clothes" or it.kind == "wearable" or (type(it.slot) == "string" and it.slot ~= ""))
             if isCloth and type(it.slot) == "string" and type(it.name) == "string" and not it.name:find(" Seed$") then
-                local iconUrl, rectOff, rectSz = scResolveItemIcon(id, it)
-                local rawAssetNum = tostring(iconUrl):match("(%d+)") or "N/A"
+                local iconUrl, rectOff, rectSz = scResolveStaticItemTexture(id, it)
+                local rawAssetNum = tostring(iconUrl):match("(%d+)") or "0"
+                if rawAssetNum == "0" then rawAssetNum = "AutoSheet" end
                 local slotClean = it.slot:lower()
                 slotMap[slotClean] = true
 
-                items[#items + 1] = {
+                local entry = {
                     id = id,
                     name = it.name,
                     lname = it.name:lower(),
@@ -632,8 +929,11 @@ local function scBuildItems()
                     assetNum = rawAssetNum,
                     rectOffset = rectOff,
                     rectSize = rectSz,
-                    doubleJump = it.doubleJump and true or false
+                    doubleJump = it.doubleJump and true or false,
+                    raw = it
                 }
+                items[#items + 1] = entry
+                itemMap[id] = entry
             end
         end
     end
@@ -651,6 +951,7 @@ local function scBuildItems()
 
     SC.DB = DB
     SC.Items = items
+    SC.ItemMap = itemMap
     SC.Slots = slotList
     return #items > 0
 end
@@ -781,7 +1082,6 @@ local function scHook()
         end
     end
 
-    -- Bungkus paket report / ban / telemetry jika ada di Net
     if AD.Enabled and AD.BlockModReport then
         for k, packetObj in pairs(Net) do
             local lk = tostring(k):lower()
@@ -812,7 +1112,6 @@ local function scUnhook()
     SC.WearTbl, SC.OrigWear, SC.MoveTbl, SC.OrigMove, SC.Hold = nil, nil, nil, nil, nil
 end
 
--- Force character visual redraw across Game.refresh, onWear, and PlayerSprite
 local function scForceCharacterRedraw()
     local W = SC.Worn
     if not W then return end
@@ -839,12 +1138,17 @@ local function scForceCharacterRedraw()
             pcall(SC.PlayerSprite.refresh, LocalPlayer.Character, W)
         end
     end
+end
 
-    -- Trigger attribute change agar sistem AuraFx / WornPet / NameUI client ikut ter-refresh
-    pcall(function()
-        local curWornAttr = LocalPlayer:GetAttribute("WornRefreshTick") or 0
-        LocalPlayer:SetAttribute("WornRefreshTick", curWornAttr + 1)
-    end)
+local function scGetWornSignature()
+    local W = SC.Worn
+    if not W then return "nil" end
+    local parts = {}
+    for k, v in pairs(W) do
+        parts[#parts + 1] = tostring(k) .. ":" .. tostring(v)
+    end
+    table.sort(parts)
+    return table.concat(parts, "|")
 end
 
 local function scMutate(fn)
@@ -886,6 +1190,7 @@ local function scMutate(fn)
     end
 
     scForceCharacterRedraw()
+    SC.LastWornSignature = scGetWornSignature()
     if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
 end
 
@@ -905,24 +1210,32 @@ local function scWearInto(W, id)
 end
 
 local function scKeepAlive()
-    local W = SC.Worn
-    if not W or next(SC.Ov) == nil then return end
-    local changed = false
-    for slot, o in pairs(SC.Ov) do
-        local want = o.vis or nil
-        local cur = W[slot]
-        if cur ~= want then
-            if cur == nil then
-                W[slot] = want
-                changed = true
-            else
-                SC.Ov[slot] = nil
+    local W = SC.Worn or scFindWorn()
+    if not W then return end
+
+    if next(SC.Ov) ~= nil then
+        local changed = false
+        for slot, o in pairs(SC.Ov) do
+            local want = o.vis or nil
+            local cur = W[slot]
+            if cur ~= want then
+                if cur == nil then
+                    W[slot] = want
+                    changed = true
+                else
+                    SC.Ov[slot] = nil
+                end
             end
         end
+        if changed then
+            scForceCharacterRedraw()
+        end
     end
-    if changed then
-        scForceCharacterRedraw()
-        if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
+
+    local sig = scGetWornSignature()
+    if sig ~= SC.LastWornSignature then
+        SC.LastWornSignature = sig
+        if SC.RefreshWornBarFn then pcall(SC.RefreshWornBarFn) end
     end
 end
 
@@ -931,7 +1244,7 @@ local function scEnsureLoop()
     SC.Loop = true
     task.spawn(function()
         while true do
-            task.wait(0.25)
+            task.wait(0.3)
             pcall(scKeepAlive)
         end
     end)
@@ -959,7 +1272,27 @@ local function scResolve(tok)
     return best
 end
 
--- Toggle pakai / lepas 1 item dari ListCard (Double-Tap)
+-- Lepas spesifik 1 slot (1x Tap pada Bar Item Dipakai di Atas)
+local function scUnwearSlot(slotName)
+    local worn, err = scFindWorn()
+    if not worn then
+        notifyClient("Set Clothes", tostring(err), 3)
+        return
+    end
+    scBuildItems()
+    scHook()
+    scEnsureLoop()
+
+    local oldId = worn[slotName]
+    local itemName = (oldId and SC.DB and SC.DB[oldId] and SC.DB[oldId].name) or tostring(slotName)
+
+    scMutate(function(W)
+        W[slotName] = nil
+    end)
+    notifyClient("Unwear Item", string.format("Dilepas: %s [%s]", itemName, tostring(slotName):upper()), 2)
+end
+
+-- Toggle pakai / lepas 1 item dari ListCard Katalog (Double-Tap)
 local function scToggleSingleItem(id)
     local worn, err = scFindWorn()
     if not worn then
@@ -975,8 +1308,7 @@ local function scToggleSingleItem(id)
 
     scMutate(function(W)
         if W[it.slot] == id then
-            local orig = SC.Ov[it.slot] and SC.Ov[it.slot].real or nil
-            W[it.slot] = orig
+            W[it.slot] = nil
         else
             scWearInto(W, id)
         end
@@ -999,10 +1331,9 @@ local function scUnwearAll()
             W[slot] = nil
         end
     end)
-    notifyClient("Set Clothes", "Semua pakaian dilepas (Unwear All Visual)", 3)
+    notifyClient("Set Clothes", "Semua pakaian berhasil dilepas (Unwear All)", 3)
 end
 
--- Tombol SET dari input teks
 local function scSet()
     local raw = tostring(getValue("SC_Items", ""))
     local tokens = {}
@@ -1011,7 +1342,7 @@ local function scSet()
         if t ~= "" then tokens[#tokens + 1] = t end
     end
     if #tokens == 0 then
-        notifyClient("Set Clothes", "Isi kolom item atau klik 2x pada Card List!", 3)
+        notifyClient("Set Clothes", "Isi kolom item atau tap 2x pada kartu di katalog!", 3)
         return
     end
 
@@ -1042,7 +1373,6 @@ local function scSet()
     end
 end
 
--- Tombol KEMBALI KE AWAL (Reset ke pakaian server asli)
 local function scReset()
     if SC.Worn and next(SC.Ov) ~= nil then
         scMutate(function(W)
@@ -1056,14 +1386,17 @@ local function scReset()
 end
 
 -- =========================================================================
--- IN-GUI EMBEDDED CLOTHES LISTCARD & WORN VIEWER (TANPA WINDOW BARU)
--- Menyuntikkan ScrollingFrame + Item Cards langsung ke dalam Card R&8_DV
+-- REDESIGNED IN-GUI CLOTHES BROWSER & WORN BAR (TANPA MEMBUAT WINDOW BARU)
+--  * Bagian Atas: Bar "Sedang Dipakai" dengan kartu mini ber-ikon + 1x Tap Copot
+--  * Tombol UNWEAR ALL: Pill button modern dark-crimson dengan stroke halus
+--  * Bagian Bawah: Katalog ListCard dengan gambar rbxassetid asli + 2x Tap Pakai
 -- =========================================================================
 local function scMountEmbeddedBrowser()
     task.spawn(function()
         task.wait(0.8)
         scBuildItems()
         pcall(scFindWorn)
+        scEnsureLoop()
 
         local targetAnchor = nil
         for _ = 1, 20 do
@@ -1086,73 +1419,133 @@ local function scMountEmbeddedBrowser()
             cardContainer = cardContainer.Parent
         end
         if not cardContainer then return end
-        if cardContainer:FindFirstChild("R8DV_EmbeddedClothesBrowser") then return end
+        local oldBrowser = cardContainer:FindFirstChild("R8DV_EmbeddedClothesBrowser")
+        if oldBrowser then oldBrowser:Destroy() end
+
+        local CLEAN_FONT_BOLD = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal)
+        local CLEAN_FONT_MED  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+        local CLEAN_FONT_REG  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+
+        local function lockFont(guiObj, fontFace)
+            guiObj:SetAttribute("R8DV_SkipLight", true)
+            guiObj.FontFace = fontFace
+            guiObj:GetPropertyChangedSignal("FontFace"):Connect(function()
+                if guiObj.FontFace ~= fontFace then
+                    guiObj.FontFace = fontFace
+                end
+            end)
+        end
 
         local holder = Instance.new("Frame")
         holder.Name = "R8DV_EmbeddedClothesBrowser"
-        holder.Size = UDim2.new(1, 0, 0, 420)
-        holder.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        holder.Size = UDim2.new(1, 0, 0, 465)
+        holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
         holder.BorderSizePixel = 0
         holder.LayoutOrder = 99
         holder.Parent = cardContainer
 
         local holderCorner = Instance.new("UICorner")
-        holderCorner.CornerRadius = UDim.new(0, 8)
+        holderCorner.CornerRadius = UDim.new(0, 10)
         holderCorner.Parent = holder
 
         local holderStroke = Instance.new("UIStroke")
-        holderStroke.Color = Color3.fromRGB(48, 48, 56)
+        holderStroke.Color = Color3.fromRGB(38, 40, 48)
         holderStroke.Thickness = 1
         holderStroke.Parent = holder
 
-        -- Panel Atas: Status Item Dipakai Saat Ini (Real-time di dalam GUI)
+        -- =================================================================
+        -- PANEL ATAS: BAR ITEM DIPAKAI SAAT INI (1x TAP UNTUK COPOT)
+        -- =================================================================
         local wornPanel = Instance.new("Frame")
         wornPanel.Name = "WornStatusPanel"
-        wornPanel.Size = UDim2.new(1, -16, 0, 68)
-        wornPanel.Position = UDim2.new(0, 8, 0, 8)
-        wornPanel.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+        wornPanel.Size = UDim2.new(1, -20, 0, 96)
+        wornPanel.Position = UDim2.new(0, 10, 0, 10)
+        wornPanel.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
         wornPanel.BorderSizePixel = 0
         wornPanel.Parent = holder
 
         local wornCorner = Instance.new("UICorner")
-        wornCorner.CornerRadius = UDim.new(0, 6)
+        wornCorner.CornerRadius = UDim.new(0, 8)
         wornCorner.Parent = wornPanel
 
-        local wornTitle = Instance.new("TextLabel")
-        wornTitle.Size = UDim2.new(1, -110, 0, 18)
-        wornTitle.Position = UDim2.new(0, 8, 0, 4)
-        wornTitle.BackgroundTransparency = 1
-        wornTitle.Font = Enum.Font.GothamMedium
-        wornTitle.TextSize = 11
-        wornTitle.TextColor3 = Color3.fromRGB(160, 200, 255)
-        wornTitle.TextXAlignment = Enum.TextXAlignment.Left
-        wornTitle.Text = "ITEM DIPAKAI SAAT INI (KLIK CHIP UNTUK LEPAS):"
-        wornTitle.Parent = wornPanel
+        local wornStroke = Instance.new("UIStroke")
+        wornStroke.Color = Color3.fromRGB(44, 48, 58)
+        wornStroke.Thickness = 1
+        wornStroke.Parent = wornPanel
 
+        -- Header Bar di dalam WornPanel
+        local headerBar = Instance.new("Frame")
+        headerBar.Size = UDim2.new(1, -20, 0, 26)
+        headerBar.Position = UDim2.new(0, 10, 0, 6)
+        headerBar.BackgroundTransparency = 1
+        headerBar.Parent = wornPanel
+
+        local statusDot = Instance.new("Frame")
+        statusDot.Size = UDim2.new(0, 7, 0, 7)
+        statusDot.Position = UDim2.new(0, 0, 0.5, -3)
+        statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+        statusDot.BorderSizePixel = 0
+        statusDot.Parent = headerBar
+
+        local dotCorner = Instance.new("UICorner")
+        dotCorner.CornerRadius = UDim.new(1, 0)
+        dotCorner.Parent = statusDot
+
+        local wornTitle = Instance.new("TextLabel")
+        wornTitle.Size = UDim2.new(1, -135, 1, 0)
+        wornTitle.Position = UDim2.new(0, 13, 0, 0)
+        wornTitle.BackgroundTransparency = 1
+        wornTitle.TextSize = 11
+        wornTitle.TextColor3 = Color3.fromRGB(220, 225, 235)
+        wornTitle.TextXAlignment = Enum.TextXAlignment.Left
+        wornTitle.Text = "SEDANG DIPAKAI  •  TAP 1x ITEM UNTUK LEPAS"
+        lockFont(wornTitle, CLEAN_FONT_BOLD)
+        wornTitle.Parent = headerBar
+
+        -- Tombol UNWEAR ALL yang diperbagus (Sleek Dark-Crimson Pill Button)
         local unwearBtn = Instance.new("TextButton")
-        unwearBtn.Size = UDim2.new(0, 96, 0, 20)
-        unwearBtn.Position = UDim2.new(1, -102, 0, 4)
-        unwearBtn.BackgroundColor3 = Color3.fromRGB(170, 45, 45)
-        unwearBtn.Font = Enum.Font.GothamMedium
+        unwearBtn.Name = "UnwearAllBtn"
+        unwearBtn.Size = UDim2.new(0, 108, 0, 24)
+        unwearBtn.Position = UDim2.new(1, -108, 0.5, -12)
+        unwearBtn.BackgroundColor3 = Color3.fromRGB(45, 22, 26)
+        unwearBtn.AutoButtonColor = false
         unwearBtn.TextSize = 10
-        unwearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        unwearBtn.Text = "UNWEAR ALL"
-        unwearBtn.Parent = wornPanel
+        unwearBtn.TextColor3 = Color3.fromRGB(255, 115, 125)
+        unwearBtn.Text = "×  LEPAS SEMUA"
+        lockFont(unwearBtn, CLEAN_FONT_BOLD)
+        unwearBtn.Parent = headerBar
 
         local unwearCorner = Instance.new("UICorner")
-        unwearCorner.CornerRadius = UDim.new(0, 4)
+        unwearCorner.CornerRadius = UDim.new(0, 6)
         unwearCorner.Parent = unwearBtn
 
+        local unwearStroke = Instance.new("UIStroke")
+        unwearStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        unwearStroke.Color = Color3.fromRGB(165, 55, 65)
+        unwearStroke.Thickness = 1
+        unwearStroke.Parent = unwearBtn
+
+        unwearBtn.MouseEnter:Connect(function()
+            unwearBtn.BackgroundColor3 = Color3.fromRGB(165, 45, 55)
+            unwearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end)
+        unwearBtn.MouseLeave:Connect(function()
+            unwearBtn.BackgroundColor3 = Color3.fromRGB(45, 22, 26)
+            unwearBtn.TextColor3 = Color3.fromRGB(255, 115, 125)
+        end)
         unwearBtn.MouseButton1Click:Connect(function()
             scUnwearAll()
         end)
 
+        -- Horizontal Scroll Kartu Mini Pakaian yang Sedang Dipakai
         local wornScroll = Instance.new("ScrollingFrame")
-        wornScroll.Size = UDim2.new(1, -16, 0, 38)
-        wornScroll.Position = UDim2.new(0, 8, 0, 26)
+        wornScroll.Name = "WornItemsScroll"
+        wornScroll.Size = UDim2.new(1, -20, 0, 54)
+        wornScroll.Position = UDim2.new(0, 10, 0, 36)
         wornScroll.BackgroundTransparency = 1
         wornScroll.BorderSizePixel = 0
         wornScroll.ScrollBarThickness = 3
+        wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
         wornScroll.ScrollingDirection = Enum.ScrollingDirection.X
         wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
         wornScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -1160,105 +1553,226 @@ local function scMountEmbeddedBrowser()
 
         local wornLayout = Instance.new("UIListLayout")
         wornLayout.FillDirection = Enum.FillDirection.Horizontal
-        wornLayout.Padding = UDim.new(0, 6)
+        wornLayout.Padding = UDim.new(0, 8)
         wornLayout.VerticalAlignment = Enum.VerticalAlignment.Center
         wornLayout.Parent = wornScroll
 
-        -- Info Jumlah & Petunjuk Double Tap
+        -- =================================================================
+        -- SUB-BAR INFO FILTER & JUMLAH ITEM
+        -- =================================================================
         local countLabel = Instance.new("TextLabel")
-        countLabel.Size = UDim2.new(1, -16, 0, 18)
-        countLabel.Position = UDim2.new(0, 8, 0, 80)
+        countLabel.Size = UDim2.new(1, -20, 0, 20)
+        countLabel.Position = UDim2.new(0, 12, 0, 112)
         countLabel.BackgroundTransparency = 1
-        countLabel.Font = Enum.Font.Gotham
         countLabel.TextSize = 11
-        countLabel.TextColor3 = Color3.fromRGB(185, 185, 195)
+        countLabel.TextColor3 = Color3.fromRGB(155, 160, 175)
         countLabel.TextXAlignment = Enum.TextXAlignment.Left
-        countLabel.Text = "Memuat daftar pakaian..."
+        countLabel.Text = "Memuat katalog pakaian..."
+        lockFont(countLabel, CLEAN_FONT_MED)
         countLabel.Parent = holder
 
-        -- ScrollingFrame Daftar Card Pakaian
+        -- =================================================================
+        -- DAFTAR KARTU PAKAIAN SCROLLABLE (DENGAN GAMBAR RBXASSETID)
+        -- =================================================================
         local listScroll = Instance.new("ScrollingFrame")
         listScroll.Name = "ClothesListScroll"
-        listScroll.Size = UDim2.new(1, -16, 1, -108)
-        listScroll.Position = UDim2.new(0, 8, 0, 102)
-        listScroll.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+        listScroll.Size = UDim2.new(1, -20, 1, -146)
+        listScroll.Position = UDim2.new(0, 10, 0, 136)
+        listScroll.BackgroundColor3 = Color3.fromRGB(12, 13, 17)
         listScroll.BorderSizePixel = 0
         listScroll.ScrollBarThickness = 5
+        listScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 85, 100)
         listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
         listScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
         listScroll.Parent = holder
 
         local listCorner = Instance.new("UICorner")
-        listCorner.CornerRadius = UDim.new(0, 6)
+        listCorner.CornerRadius = UDim.new(0, 8)
         listCorner.Parent = listScroll
+
+        local listStroke = Instance.new("UIStroke")
+        listStroke.Color = Color3.fromRGB(32, 34, 42)
+        listStroke.Thickness = 1
+        listStroke.Parent = listScroll
 
         local listLayout = Instance.new("UIListLayout")
         listLayout.FillDirection = Enum.FillDirection.Vertical
         listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        listLayout.Padding = UDim.new(0, 5)
+        listLayout.Padding = UDim.new(0, 6)
         listLayout.Parent = listScroll
 
         local listPad = Instance.new("UIPadding")
-        listPad.PaddingTop = UDim.new(0, 6)
-        listPad.PaddingBottom = UDim.new(0, 6)
-        listPad.PaddingLeft = UDim.new(0, 6)
-        listPad.PaddingRight = UDim.new(0, 6)
+        listPad.PaddingTop = UDim.new(0, 8)
+        listPad.PaddingBottom = UDim.new(0, 8)
+        listPad.PaddingLeft = UDim.new(0, 8)
+        listPad.PaddingRight = UDim.new(0, 8)
         listPad.Parent = listScroll
 
+        -- Render Bar Item yang Sedang Dipakai (1x Tap langsung copot)
         local function refreshWornChips()
             for _, ch in ipairs(wornScroll:GetChildren()) do
                 if ch:IsA("GuiObject") then ch:Destroy() end
             end
-            local W = SC.Worn
+
+            local W = SC.Worn or scFindWorn()
             if not W or not SC.DB then
+                statusDot.BackgroundColor3 = Color3.fromRGB(240, 170, 60)
+                local emptyPill = Instance.new("Frame")
+                emptyPill.Size = UDim2.new(0, 310, 0, 42)
+                emptyPill.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
+                emptyPill.BorderSizePixel = 0
+                emptyPill.Parent = wornScroll
+
+                local epc = Instance.new("UICorner")
+                epc.CornerRadius = UDim.new(0, 6)
+                epc.Parent = emptyPill
+
                 local emptyLbl = Instance.new("TextLabel")
-                emptyLbl.Size = UDim2.new(0, 240, 0, 28)
+                emptyLbl.Size = UDim2.new(1, -16, 1, 0)
+                emptyLbl.Position = UDim2.new(0, 8, 0, 0)
                 emptyLbl.BackgroundTransparency = 1
-                emptyLbl.Font = Enum.Font.Gotham
                 emptyLbl.TextSize = 11
-                emptyLbl.TextColor3 = Color3.fromRGB(130, 130, 140)
+                emptyLbl.TextColor3 = Color3.fromRGB(145, 150, 165)
                 emptyLbl.TextXAlignment = Enum.TextXAlignment.Left
-                emptyLbl.Text = "Belum ada data worn / masuk ke world dulu"
-                emptyLbl.Parent = wornScroll
+                emptyLbl.Text = "Masuk ke dalam World terlebih dahulu untuk memuat pakaian."
+                lockFont(emptyLbl, CLEAN_FONT_REG)
+                emptyLbl.Parent = emptyPill
                 return
             end
 
-            local any = false
+            local wornEntries = {}
             for slot, id in pairs(W) do
-                local it = SC.DB[id]
-                if it then
-                    any = true
-                    local isVis = SC.Ov[slot] ~= nil
-                    local chip = Instance.new("TextButton")
-                    chip.Size = UDim2.new(0, 0, 0, 28)
-                    chip.AutomaticSize = Enum.AutomaticSize.X
-                    chip.BackgroundColor3 = isVis and Color3.fromRGB(35, 85, 145) or Color3.fromRGB(42, 42, 52)
-                    chip.Font = Enum.Font.GothamMedium
-                    chip.TextSize = 11
-                    chip.TextColor3 = Color3.fromRGB(245, 245, 250)
-                    chip.Text = string.format("  [%s] %s (%d) ×  ", slot:upper(), it.name, id)
-                    chip.Parent = wornScroll
-
-                    local cc = Instance.new("UICorner")
-                    cc.CornerRadius = UDim.new(0, 5)
-                    cc.Parent = chip
-
-                    chip.MouseButton1Click:Connect(function()
-                        scToggleSingleItem(id)
-                    end)
+                local itemObj = SC.ItemMap[id]
+                local dbIt = SC.DB[id]
+                if itemObj or dbIt then
+                    wornEntries[#wornEntries + 1] = {
+                        slot = slot,
+                        id = id,
+                        name = (itemObj and itemObj.name) or (dbIt and dbIt.name) or ("Item #" .. tostring(id)),
+                        item = itemObj or { id = id, name = dbIt.name, slot = slot, raw = dbIt }
+                    }
                 end
             end
 
-            if not any then
+            table.sort(wornEntries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
+
+            if #wornEntries == 0 then
+                statusDot.BackgroundColor3 = Color3.fromRGB(120, 125, 140)
+                wornTitle.Text = "SEDANG DIPAKAI (0)  •  BELUM ADA ITEM AKTIF"
+
+                local nonePill = Instance.new("Frame")
+                nonePill.Size = UDim2.new(0, 290, 0, 42)
+                nonePill.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
+                nonePill.BorderSizePixel = 0
+                nonePill.Parent = wornScroll
+
+                local npc = Instance.new("UICorner")
+                npc.CornerRadius = UDim.new(0, 6)
+                npc.Parent = nonePill
+
                 local noneLbl = Instance.new("TextLabel")
-                noneLbl.Size = UDim2.new(0, 220, 0, 28)
+                noneLbl.Size = UDim2.new(1, -16, 1, 0)
+                noneLbl.Position = UDim2.new(0, 10, 0, 0)
                 noneLbl.BackgroundTransparency = 1
-                noneLbl.Font = Enum.Font.Gotham
                 noneLbl.TextSize = 11
-                noneLbl.TextColor3 = Color3.fromRGB(130, 130, 140)
+                noneLbl.TextColor3 = Color3.fromRGB(140, 145, 160)
                 noneLbl.TextXAlignment = Enum.TextXAlignment.Left
-                noneLbl.Text = "Tidak ada item yang sedang dipakai"
-                noneLbl.Parent = wornScroll
+                noneLbl.Text = "Tidak ada pakaian dipakai — Tap 2x item di bawah"
+                lockFont(noneLbl, CLEAN_FONT_REG)
+                noneLbl.Parent = nonePill
+                return
+            end
+
+            statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+            wornTitle.Text = string.format("SEDANG DIPAKAI (%d ITEM)  •  TAP 1x UNTUK COPOT", #wornEntries)
+
+            for _, entry in ipairs(wornEntries) do
+                local isVis = SC.Ov[entry.slot] ~= nil
+
+                local chip = Instance.new("TextButton")
+                chip.Name = "WornCard_" .. tostring(entry.slot)
+                chip.Size = UDim2.new(0, 175, 0, 46)
+                chip.BackgroundColor3 = isVis and Color3.fromRGB(24, 34, 48) or Color3.fromRGB(28, 30, 38)
+                chip.AutoButtonColor = false
+                chip.Text = ""
+                chip.Parent = wornScroll
+
+                local cc = Instance.new("UICorner")
+                cc.CornerRadius = UDim.new(0, 7)
+                cc.Parent = chip
+
+                local cs = Instance.new("UIStroke")
+                cs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                cs.Color = isVis and Color3.fromRGB(65, 135, 220) or Color3.fromRGB(52, 56, 68)
+                cs.Thickness = 1
+                cs.Parent = chip
+
+                local iconHolder = Instance.new("Frame")
+                iconHolder.Size = UDim2.new(0, 34, 0, 34)
+                iconHolder.Position = UDim2.new(0, 6, 0.5, -17)
+                iconHolder.BackgroundColor3 = Color3.fromRGB(16, 18, 22)
+                iconHolder.BorderSizePixel = 0
+                iconHolder.Parent = chip
+
+                local ic = Instance.new("UICorner")
+                ic.CornerRadius = UDim.new(0, 5)
+                ic.Parent = iconHolder
+
+                scRenderItemIconInto(iconHolder, entry.item)
+
+                local nameLbl = Instance.new("TextLabel")
+                nameLbl.Size = UDim2.new(1, -68, 0, 18)
+                nameLbl.Position = UDim2.new(0, 46, 0, 6)
+                nameLbl.BackgroundTransparency = 1
+                nameLbl.TextSize = 11
+                nameLbl.TextColor3 = Color3.fromRGB(240, 242, 248)
+                nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+                nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+                nameLbl.Text = entry.name
+                lockFont(nameLbl, CLEAN_FONT_BOLD)
+                nameLbl.Parent = chip
+
+                local slotLbl = Instance.new("TextLabel")
+                slotLbl.Size = UDim2.new(1, -68, 0, 15)
+                slotLbl.Position = UDim2.new(0, 46, 0, 24)
+                slotLbl.BackgroundTransparency = 1
+                slotLbl.TextSize = 10
+                slotLbl.TextColor3 = isVis and Color3.fromRGB(115, 180, 255) or Color3.fromRGB(150, 155, 170)
+                slotLbl.TextXAlignment = Enum.TextXAlignment.Left
+                slotLbl.TextTruncate = Enum.TextTruncate.AtEnd
+                slotLbl.Text = string.format("[%s] #%d", tostring(entry.slot):upper(), entry.id)
+                lockFont(slotLbl, CLEAN_FONT_REG)
+                slotLbl.Parent = chip
+
+                local closeBadge = Instance.new("TextLabel")
+                closeBadge.Size = UDim2.new(0, 18, 0, 18)
+                closeBadge.Position = UDim2.new(1, -23, 0.5, -9)
+                closeBadge.BackgroundColor3 = Color3.fromRGB(48, 30, 34)
+                closeBadge.TextSize = 11
+                closeBadge.TextColor3 = Color3.fromRGB(255, 110, 120)
+                closeBadge.Text = "×"
+                lockFont(closeBadge, CLEAN_FONT_BOLD)
+                closeBadge.Parent = chip
+
+                local cbc = Instance.new("UICorner")
+                cbc.CornerRadius = UDim.new(0, 4)
+                cbc.Parent = closeBadge
+
+                chip.MouseEnter:Connect(function()
+                    cs.Color = Color3.fromRGB(235, 80, 90)
+                    closeBadge.BackgroundColor3 = Color3.fromRGB(210, 50, 60)
+                    closeBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+                end)
+                chip.MouseLeave:Connect(function()
+                    cs.Color = isVis and Color3.fromRGB(65, 135, 220) or Color3.fromRGB(52, 56, 68)
+                    closeBadge.BackgroundColor3 = Color3.fromRGB(48, 30, 34)
+                    closeBadge.TextColor3 = Color3.fromRGB(255, 110, 120)
+                end)
+
+                -- 1x TAP LANGSUNG COPOT ITEM
+                chip.MouseButton1Click:Connect(function()
+                    scUnwearSlot(entry.slot)
+                end)
             end
         end
 
@@ -1271,7 +1785,7 @@ local function scMountEmbeddedBrowser()
             end
 
             if not SC.Items or #SC.Items == 0 then
-                countLabel.Text = "ItemDB kosong / gagal dimuat."
+                countLabel.Text = "ItemDB kosong / belum ter-load."
                 return
             end
 
@@ -1286,7 +1800,7 @@ local function scMountEmbeddedBrowser()
                     or item.lname:find(q, 1, true)
                     or tostring(item.id):find(q, 1, true)
                     or item.slot:find(q, 1, true)
-                    or item.assetNum:find(q, 1, true)
+                    or tostring(item.assetNum):lower():find(q, 1, true)
                 if slotOk and searchOk then
                     matched[#matched + 1] = item
                 end
@@ -1294,8 +1808,8 @@ local function scMountEmbeddedBrowser()
 
             local maxShow = math.min(#matched, 250)
             countLabel.Text = string.format(
-                "Menampilkan %d dari %d item (Filter: %s) — Tap 2x kartu untuk Pakai/Lepas",
-                maxShow, #matched, SC.SelectedSlot or "All"
+                "Menampilkan %d dari %d Pakaian (Filter: %s)  •  Tap 2x Kartu untuk Pakai / Lepas",
+                maxShow, #matched, (SC.SelectedSlot or "All"):upper()
             )
 
             for i = 1, maxShow do
@@ -1305,84 +1819,100 @@ local function scMountEmbeddedBrowser()
                 local card = Instance.new("TextButton")
                 card.Name = "ItemCard_" .. tostring(item.id)
                 card.LayoutOrder = i
-                card.Size = UDim2.new(1, 0, 0, 54)
-                card.BackgroundColor3 = isEquipped and Color3.fromRGB(28, 62, 42) or Color3.fromRGB(24, 24, 30)
+                card.Size = UDim2.new(1, 0, 0, 56)
+                card.BackgroundColor3 = isEquipped and Color3.fromRGB(20, 42, 32) or Color3.fromRGB(20, 22, 28)
                 card.BorderSizePixel = 0
-                card.AutoButtonColor = true
+                card.AutoButtonColor = false
                 card.Text = ""
                 card.Parent = listScroll
 
                 local cCorner = Instance.new("UICorner")
-                cCorner.CornerRadius = UDim.new(0, 6)
+                cCorner.CornerRadius = UDim.new(0, 7)
                 cCorner.Parent = card
 
                 local cStroke = Instance.new("UIStroke")
-                cStroke.Color = isEquipped and Color3.fromRGB(70, 190, 110) or Color3.fromRGB(45, 45, 55)
+                cStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                cStroke.Color = isEquipped and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
                 cStroke.Thickness = 1
                 cStroke.Parent = card
 
-                -- Icon Frame & Roblox Asset Image
+                -- Kotak Ikon & Render Texture Asli (`ItemIcon` / `ClothesDB` / `Assets`)
                 local iconBg = Instance.new("Frame")
                 iconBg.Size = UDim2.new(0, 42, 0, 42)
-                iconBg.Position = UDim2.new(0, 6, 0, 6)
-                iconBg.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+                iconBg.Position = UDim2.new(0, 7, 0.5, -21)
+                iconBg.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
                 iconBg.BorderSizePixel = 0
                 iconBg.Parent = card
 
                 local iCorner = Instance.new("UICorner")
-                iCorner.CornerRadius = UDim.new(0, 5)
+                iCorner.CornerRadius = UDim.new(0, 6)
                 iCorner.Parent = iconBg
 
-                local img = Instance.new("ImageLabel")
-                img.Size = UDim2.new(1, -4, 1, -4)
-                img.Position = UDim2.new(0, 2, 0, 2)
-                img.BackgroundTransparency = 1
-                img.Image = item.icon or "rbxassetid://0"
-                img.ScaleType = Enum.ScaleType.Fit
-                if typeof(item.rectOffset) == "Vector2" then img.ImageRectOffset = item.rectOffset end
-                if typeof(item.rectSize) == "Vector2" then img.ImageRectSize = item.rectSize end
-                img.Parent = iconBg
+                local iStroke = Instance.new("UIStroke")
+                iStroke.Color = Color3.fromRGB(34, 36, 45)
+                iStroke.Thickness = 1
+                iStroke.Parent = iconBg
 
-                -- Nama Item + ID + Slot
+                local resolvedAsset = scRenderItemIconInto(iconBg, item)
+
+                -- Nama Item + ID
                 local titleLbl = Instance.new("TextLabel")
-                titleLbl.Size = UDim2.new(1, -145, 0, 22)
-                titleLbl.Position = UDim2.new(0, 56, 0, 6)
+                titleLbl.Size = UDim2.new(1, -155, 0, 20)
+                titleLbl.Position = UDim2.new(0, 58, 0, 8)
                 titleLbl.BackgroundTransparency = 1
-                titleLbl.Font = Enum.Font.GothamMedium
-                titleLbl.TextSize = 13
-                titleLbl.TextColor3 = Color3.fromRGB(245, 245, 250)
+                titleLbl.TextSize = 12
+                titleLbl.TextColor3 = Color3.fromRGB(242, 244, 250)
                 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
                 titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                titleLbl.Text = string.format("%s  [ID: %d]", item.name, item.id)
+                titleLbl.Text = string.format("%s   #%d", item.name, item.id)
+                lockFont(titleLbl, CLEAN_FONT_BOLD)
                 titleLbl.Parent = card
 
-                -- Sub-info: Slot & Roblox Asset ID
+                -- Sub-info: Slot & Roblox Asset ID Texture
                 local subLbl = Instance.new("TextLabel")
-                subLbl.Size = UDim2.new(1, -145, 0, 18)
-                subLbl.Position = UDim2.new(0, 56, 0, 28)
+                subLbl.Size = UDim2.new(1, -155, 0, 18)
+                subLbl.Position = UDim2.new(0, 58, 0, 29)
                 subLbl.BackgroundTransparency = 1
-                subLbl.Font = Enum.Font.Gotham
-                subLbl.TextSize = 11
-                subLbl.TextColor3 = Color3.fromRGB(165, 165, 178)
+                subLbl.TextSize = 10
+                subLbl.TextColor3 = Color3.fromRGB(145, 152, 168)
                 subLbl.TextXAlignment = Enum.TextXAlignment.Left
                 subLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                subLbl.Text = string.format("Slot: %s  •  Asset: %s%s", item.slot:upper(), tostring(item.icon), item.doubleJump and "  •  [2x Jump]" or "")
+                subLbl.Text = string.format(
+                    "SLOT: %s   •   ASSET: %s%s",
+                    item.slot:upper(),
+                    tostring(resolvedAsset),
+                    item.doubleJump and "   •   2x JUMP" or ""
+                )
+                lockFont(subLbl, CLEAN_FONT_REG)
                 subLbl.Parent = card
 
-                -- Badge Status (DIPAKAI / DOUBLE TAP)
+                -- Pill Badge Status di Kanan Kartu
                 local badge = Instance.new("TextLabel")
-                badge.Size = UDim2.new(0, 78, 0, 24)
-                badge.Position = UDim2.new(1, -86, 0.5, -12)
-                badge.BackgroundColor3 = isEquipped and Color3.fromRGB(45, 150, 80) or Color3.fromRGB(36, 36, 44)
-                badge.Font = Enum.Font.GothamMedium
+                badge.Size = UDim2.new(0, 82, 0, 24)
+                badge.Position = UDim2.new(1, -90, 0.5, -12)
+                badge.BackgroundColor3 = isEquipped and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
                 badge.TextSize = 10
-                badge.TextColor3 = Color3.fromRGB(255, 255, 255)
-                badge.Text = isEquipped and "DIPAKAI" or "2x TAP"
+                badge.TextColor3 = isEquipped and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
+                badge.Text = isEquipped and "DIPAKAI" or "2x TAP WEAR"
+                lockFont(badge, CLEAN_FONT_BOLD)
                 badge.Parent = card
 
                 local bCorner = Instance.new("UICorner")
-                bCorner.CornerRadius = UDim.new(0, 4)
+                bCorner.CornerRadius = UDim.new(0, 5)
                 bCorner.Parent = badge
+
+                card.MouseEnter:Connect(function()
+                    if not isEquipped then
+                        card.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
+                        cStroke.Color = Color3.fromRGB(65, 72, 90)
+                    end
+                end)
+                card.MouseLeave:Connect(function()
+                    if not isEquipped then
+                        card.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+                        cStroke.Color = Color3.fromRGB(38, 42, 52)
+                    end
+                end)
 
                 card.MouseButton1Click:Connect(function()
                     local now = os.clock()
@@ -1394,10 +1924,15 @@ local function scMountEmbeddedBrowser()
                         SC.LastTapId = item.id
                         SC.LastTapTime = now
                         badge.Text = "TAP LAGI!"
+                        badge.BackgroundColor3 = Color3.fromRGB(55, 115, 210)
+                        badge.TextColor3 = Color3.fromRGB(255, 255, 255)
                         task.delay(0.46, function()
                             if badge and badge.Parent and SC.LastTapId == item.id then
                                 local curW = SC.Worn or {}
-                                badge.Text = (curW[item.slot] == item.id) and "DIPAKAI" or "2x TAP"
+                                local eq = (curW[item.slot] == item.id)
+                                badge.Text = eq and "DIPAKAI" or "2x TAP WEAR"
+                                badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
+                                badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
                             end
                         end)
                     end
@@ -1405,6 +1940,7 @@ local function scMountEmbeddedBrowser()
             end
         end
 
+        SC.RefreshWornBarFn = refreshWornChips
         SC.UpdateUIFn = rebuildListCards
         rebuildListCards()
     end)
@@ -1412,15 +1948,11 @@ end
 
 -- =========================================================================
 -- LOGIKA MOD DETECTOR + ANTI-SPAM NOTIF + AUTO ACTION (EXIT/DIEM) + ESP
---  * Deteksi berdasarkan Roles module, Player Attributes, dan Character/Hidden state
---  * Notifikasi Anti-Spam: setiap moderator di world hanya dinotifikasi 1x per sesi
---  * Pilihan Method: Auto Exit World, Diem (Freeze + Stop Spam), atau Notify Only
---  * ESP Garis (Tracer) & Highlight Box menuju lokasi Mod (termasuk saat Hide/Invis)
 -- =========================================================================
 local ModSys = {
     RolesModule = nil,
-    ActiveMods = {},      -- [Player] = { name, role, notified }
-    ESPObjects = {},      -- [Player] = { box, bill, label, line }
+    ActiveMods = {},
+    ESPObjects = {},
     OverlayGui = nil,
     StatusLabel = nil,
     FrozenPos = nil,
@@ -1461,7 +1993,6 @@ end
 local function checkPlayerIsMod(plr)
     if not plr or plr == LocalPlayer then return false, nil end
 
-    -- 1. Cek via modul ReplicatedStorage.Shared.Roles jika tersedia
     if type(ModSys.RolesModule) == "table" then
         for _, fnName in ipairs({ "isMod", "IsMod", "isAdmin", "IsAdmin", "isStaff", "getRole", "GetRole" }) do
             local fn = ModSys.RolesModule[fnName]
@@ -1482,7 +2013,6 @@ local function checkPlayerIsMod(plr)
         end
     end
 
-    -- 2. Cek semua Attributes pada Player
     local okAttr, attrs = pcall(function() return plr:GetAttributes() end)
     if okAttr and type(attrs) == "table" then
         for k, v in pairs(attrs) do
@@ -1494,7 +2024,6 @@ local function checkPlayerIsMod(plr)
         end
     end
 
-    -- 3. Cek ValueObjects di dalam Player (leaderstats / data folder)
     for _, desc in ipairs(plr:GetDescendants()) do
         if desc:IsA("ValueBase") then
             local ln = desc.Name:lower()
@@ -1505,7 +2034,6 @@ local function checkPlayerIsMod(plr)
         end
     end
 
-    -- 4. Cek prefix nama visual (`# atau `@ adalah prefix standar Moderator/Admin Growtopia)
     local nick = tostring(plr:GetAttribute("Nick") or plr.DisplayName or plr.Name)
     if nick:find("^`@") or nick:find("^`#") or nick:lower():find("^%[mod%]") or nick:lower():find("^%[admin%]") or nick:lower():find("^mod ") then
         return true, "Prefix:" .. nick
@@ -1514,7 +2042,6 @@ local function checkPlayerIsMod(plr)
     return false, nil
 end
 
--- Cari posisi Moderator meskipun sedang Hide / Invisible / Vanish
 local function getModWorldPosition(plr)
     if not plr then return nil, true end
     local char = plr.Character
@@ -1526,7 +2053,6 @@ local function getModWorldPosition(plr)
         end
     end
 
-    -- Jika Character di-unparent atau disembunyikan di folder khusus Workspace
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("Model") and (obj.Name == plr.Name or obj:GetAttribute("UserId") == plr.UserId or obj:GetAttribute("Owner") == plr.Name) then
             local part = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
@@ -1536,7 +2062,6 @@ local function getModWorldPosition(plr)
         end
     end
 
-    -- Cek apakah posisi disimpan di Attribute Player (2D/Grid coordinates)
     local px, py, pz = plr:GetAttribute("PosX") or plr:GetAttribute("X"), plr:GetAttribute("PosY") or plr:GetAttribute("Y"), plr:GetAttribute("PosZ") or plr:GetAttribute("Z")
     if type(px) == "number" and type(py) == "number" then
         return Vector3.new(px, py, type(pz) == "number" and pz or 0), true
@@ -1682,7 +2207,7 @@ local function updateModESP()
 
             local worldPos, isHidden = getModWorldPosition(plr)
             if worldPos then
-                local vp, onScreen = Camera:WorldToViewportPoint(worldPos)
+                local vp = Camera:WorldToViewportPoint(worldPos)
                 local dist = 0
                 if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
                     dist = (LocalPlayer.Character.PrimaryPart.Position - worldPos).Magnitude
@@ -1713,7 +2238,6 @@ local function updateModESP()
                     plr.Name, tostring(info.role), isHidden and "HIDDEN/INVIS" or "VISIBLE", dist
                 )
             else
-                -- Mod di world tapi koordinat belum ter-replicate (Full Server Vanish)
                 local topPos = Vector2.new(Camera.ViewportSize.X / 2, 75)
                 esp.box.Position = UDim2.new(0, topPos.X, 0, topPos.Y)
                 esp.box.Visible = true
@@ -1749,7 +2273,6 @@ local function scanModerators()
                     ModSys.ActiveMods[plr] = existing
                 end
 
-                -- ANTI-SPAM ALERT: hanya beri tahu 1x saat Mod baru terdeteksi di world
                 if not existing.notified then
                     existing.notified = true
                     notifyClient(
@@ -1764,7 +2287,6 @@ local function scanModerators()
         end
     end
 
-    -- Bersihkan Mod yang sudah keluar dari world (supaya kalau join lagi nanti tetap dikasih tahu 1x)
     for plr in pairs(ModSys.ActiveMods) do
         if not currentMods[plr] then
             notifyClient("Mod Left", string.format("Moderator %s telah keluar dari World.", plr.Name), 4)
@@ -1773,7 +2295,6 @@ local function scanModerators()
         end
     end
 
-    -- Tindakan Otomatis berdasarkan Method yang dipilih
     local hasAnyMod = (#modNamesList > 0)
     local actionOn = getValue("Mod_AutoAction", true)
     local method = getValue("Mod_Method", "Diem (Freeze + Stop Spam)")
@@ -1948,25 +2469,25 @@ feature("Name", "Set Visual Name")({
 })
 
 -- =========================================================================
--- KATEGORI 3: SET CLOTHES + EMBEDDED VISUAL LISTCARD & ASSET ID
+-- KATEGORI 3: SET CLOTHES (DIPERBAIKI & DIPERBAGUS)
 -- =========================================================================
 pcall(scBuildItems)
 if UI.Category then UI:Category("Set Clothes") end
 
 feature("Item", "Set Clothes")({
     center = center(function(c)
-        c:Header("Set Clothes & Visual Catalog", "Katalog pakaian lengkap dengan gambar Asset ID, Search, Filter Slot & Double-Tap Wear", "Client")
+        c:Header("Set Clothes & Visual Catalog", "Katalog pakaian ber-ikon Asset ID, Bar Pakaian Aktif (1x Tap Copot) & Katalog (2x Tap Pakai)", "Client")
 
         c:StatRow({
-            { Icon = "Bolt",   Label = "Mode",         Value = "Client" },
-            { Icon = "Shield", Label = "Kirim server", Value = "Diblokir" },
-            { Icon = "Check",  Label = "Interaksi",    Value = "2x Tap Wear" }
+            { Icon = "Bolt",   Label = "Bar Atas",     Value = "1x Tap Copot" },
+            { Icon = "Check",  Label = "Katalog",      Value = "2x Tap Pakai" },
+            { Icon = "Shield", Label = "Kirim Server", Value = "Diblokir" }
         })
 
         local CatalogCard = c:Card("KATALOG VISUAL CLOTHES", nil, "Palette", {
-            Subtitle = "Cari nama/ID/Asset, filter slot (mask, head, wing, dll), tap 2x pada item di bawah untuk langsung pakai"
+            Subtitle = "Bar atas menampilkan item dipakai (Tap 1x untuk lepas). Daftar bawah menampilkan katalog (Tap 2x untuk pakai)"
         })
-        CatalogCard:Input("Cari Nama / ID / Asset ID", "SC_Search", "Ketik untuk filter katalog secara langsung...", "", function(val)
+        CatalogCard:Input("Cari Nama / ID / Asset ID", "SC_Search", "Ketik nama item, ID, atau slot...", "", function(val)
             SC.SearchQuery = tostring(val or "")
             if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
         end)
@@ -1988,7 +2509,7 @@ feature("Item", "Set Clothes")({
         CtrlCard:Button("Pakai dari Kolom Input", "SET", "Bolt", function()
             scSet()
         end)
-        CtrlCard:Button("Lepas Semua Item (Unwear All)", "UNWEAR ALL", "Shield", function()
+        CtrlCard:Button("Lepas Semua Item (Unwear All)", "LEPAS SEMUA", "Shield", function()
             scUnwearAll()
         end)
         CtrlCard:Button("Kembali ke Pakaian Asli", "RESET AWAL", "Check", function()
@@ -2011,7 +2532,7 @@ feature("Item", "Set Clothes")({
 })
 
 -- =========================================================================
--- KATEGORI 4: MODS & ANTI-DETECTION (BARU)
+-- KATEGORI 4: MODS & ANTI-DETECTION
 -- =========================================================================
 if UI.Category then UI:Category("Safety & Mods") end
 
@@ -2102,7 +2623,6 @@ feature("Shield", "Mod Detector & Anti-Detect")({
     end)
 })
 
--- Mount label status mod secara langsung di dalam kartu MONITOR MODERATOR WORLD
 task.spawn(function()
     task.wait(1.0)
     for _, root in ipairs(lightFindRoots()) do
@@ -2181,7 +2701,7 @@ feature("Misc", "Misc")({
     end)
 })
 
--- Inisialisasi awal: pasang hook anti-detection, mount embedded listcard pakaian, dan aktifkan teks ringan
+-- Inisialisasi awal
 task.spawn(function()
     pcall(scHook)
     scMountEmbeddedBrowser()
