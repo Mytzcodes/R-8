@@ -174,6 +174,65 @@ end
 
 -- ============ PACKET SPY ============
 -- Buffer -> readable info: u8 list, embedded ASCII strings (len>=3), try string decode
+-- Parser heuristik untuk buffer custom (Blink/Zap/ByteNet/serializer sendiri):
+-- u16 LE length + string ASCII -> str, 8 byte yang valid sbg double -> f64, sisanya u8 mentah.
+local function parseBufferLayout(buf, maxItems)
+    local len = buffer.len(buf)
+    local items, raw, rawStart = {}, {}, 0
+    local i = 0
+    local function flush()
+        if #raw > 0 then
+            items[#items + 1] = ("+0x%02X raw[%d]: %s"):format(rawStart, #raw, table.concat(raw, " "))
+            raw = {}
+        end
+    end
+    while i < len and #items < (maxItems or 80) do
+        local matched = false
+        -- length-prefixed string (u16 LE)
+        if i + 2 <= len then
+            local n = buffer.readu16(buf, i)
+            if n >= 2 and n <= 512 and i + 2 + n <= len then
+                local ok = true
+                local chars = table.create(n)
+                for k = 0, n - 1 do
+                    local c = buffer.readu8(buf, i + 2 + k)
+                    if c < 32 or c > 126 then ok = false break end
+                    chars[k + 1] = string.char(c)
+                end
+                if ok then
+                    flush()
+                    items[#items + 1] = ("+0x%02X str(%d) \"%s\""):format(i, n, table.concat(chars))
+                    i += 2 + n
+                    matched = true
+                end
+            end
+        end
+        -- f64 (byte tertinggi harus eksponen wajar, nilai bukan nol)
+        if not matched and i + 8 <= len then
+            local top = buffer.readu8(buf, i + 7)
+            if top == 0x3F or top == 0x40 or top == 0x41 or top == 0x42 or top == 0xBF or top == 0xC0 or top == 0xC1 or top == 0xC2 then
+                local okF, v = pcall(buffer.readf64, buf, i)
+                if okF and v == v and math.abs(v) >= 0.001 and math.abs(v) < 1e15 then
+                    flush()
+                    items[#items + 1] = ("+0x%02X f64 %s"):format(i, (v == math.floor(v)) and string.format("%d", v) or tostring(v))
+                    i += 8
+                    matched = true
+                end
+            end
+        end
+        if not matched then
+            if #raw == 0 then rawStart = i end
+            raw[#raw + 1] = string.format("%02X", buffer.readu8(buf, i))
+            i += 1
+            if #raw >= 16 then flush() end
+        end
+    end
+    flush()
+    if i < len then items[#items + 1] = ("... (%d byte lagi tidak diparse)"):format(len - i) end
+    return items
+end
+S.parseBufferLayout = parseBufferLayout
+
 function S.bufferInfo(buf)
     local len = buffer.len(buf)
     local okS, str = pcall(buffer.tostring, buf)
@@ -195,6 +254,8 @@ function S.bufferInfo(buf)
         for i = 0, math.min(len, 128) - 1 do t[#t + 1] = buffer.readu8(buf, i) end
         return table.concat(t, ",")
     end)
+    local okL, layout = pcall(parseBufferLayout, buf, 80)
+    if okL and #layout > 0 then out[#out + 1] = "layout (heuristik):\n  " .. table.concat(layout, "\n  ") end
     if ok1 then out[#out + 1] = "u8: " .. u8 .. (len > 128 and ",..." or "") end
     return table.concat(out, "\n"), "buffer"
 end
@@ -207,8 +268,99 @@ S.Blocked = {}
 S.OnPacket = nil
 local counter = 0
 
+-- Auto spam/ping filter: packet identik (remote + method + argumen sama persis) yang berulang
+-- (mis. heartbeat "hb" saat player diam) hanya dicatat beberapa kali, sisanya dihitung saja.
+S.HideSpam = true
+S.SpamThreshold = 3      -- berapa kali boleh tercatat sebelum dianggap spam
+S.SpamWindow = 20        -- detik: kalau jeda > window, hitungan di-reset (packet dianggap baru lagi)
+S.IgnoreNames = {}       -- [remote.Name] = true, diabaikan manual (tombol Ignore)
+S.SpamSeen = {}          -- signature -> {n, last, first}
+S.SpamDropped = 0
+local function spamSig(dir, remote, method, args)
+    local t = {dir, fullName(remote), method}
+    for i = 1, args.n do t[#t + 1] = ser(args[i]) end
+    return table.concat(t, "\1")
+end
+
+S.ShapeSeen = {}
+-- "bentuk" packet: angka diabaikan (timestamp/counter berubah-ubah), string pendek & tipe dipakai
+local function shapeSig(dir, remote, method, args)
+    local t = {dir, fullName(remote), method}
+    for i = 1, args.n do
+        local v = args[i]
+        local ty = typeof(v)
+        if ty == "number" then t[#t + 1] = "#"
+        elseif ty == "string" then t[#t + 1] = (#v <= 32) and v or "str"
+        elseif ty == "buffer" then t[#t + 1] = "buf" .. buffer.len(v)
+        else t[#t + 1] = ty end
+    end
+    return table.concat(t, "\1")
+end
+-- true jika packet ini bagian dari ping periodik (interval teratur) -> di-skip
+local function periodicSpam(sig)
+    local now = tick()
+    local e = S.ShapeSeen[sig]
+    if not e or now - e.last > 30 then
+        e = {last = now, iv = {}, pk = nil, spam = false}
+        S.ShapeSeen[sig] = e
+        S._curShape = e
+        return false
+    end
+    local gap = now - e.last
+    e.last = now
+    table.insert(e.iv, gap)
+    if #e.iv > 5 then table.remove(e.iv, 1) end
+    local sum = 0
+    for _, g in ipairs(e.iv) do sum += g end
+    local mean = sum / #e.iv
+    if e.spam then
+        -- masih ping selama jedanya mirip rata-rata; kalau tidak, bukan ping lagi
+        if math.abs(gap - mean) <= mean * 0.5 then
+            if e.pk then e.pk.repeats = (e.pk.repeats or 0) + 1 end
+            return true
+        end
+        e.spam, e.iv = false, {gap}
+        S._curShape = e
+        return false
+    end
+    if #e.iv >= 4 and mean >= 0.4 then
+        local regular = true
+        for _, g in ipairs(e.iv) do if math.abs(g - mean) > mean * 0.25 then regular = false break end end
+        if regular then
+            e.spam = true
+            if e.pk then e.pk.repeats = (e.pk.repeats or 0) + 1 end
+            return true
+        end
+    end
+    S._curShape = e
+    return false
+end
+
 local function record(dir, remote, method, args, caller)
-    if S.Paused or S.Blocked[remote] then return end
+    if S.Paused or S.Blocked[remote] or S.IgnoreNames[remote.Name] then return end
+    S._curShape = nil
+    if S.HideSpam then
+        local okS, shape = pcall(shapeSig, dir, remote, method, args)
+        if okS and periodicSpam(shape) then S.SpamDropped += 1 return end
+        local ok, sig = pcall(spamSig, dir, remote, method, args)
+        if ok then
+            local now = tick()
+            local e = S.SpamSeen[sig]
+            if e and now - e.last > S.SpamWindow then e = nil end
+            if not e then
+                e = {n = 0, last = now, pk = nil}
+                S.SpamSeen[sig] = e
+            end
+            e.n += 1
+            e.last = now
+            if e.n > S.SpamThreshold then
+                S.SpamDropped += 1
+                if e.pk then e.pk.repeats = (e.pk.repeats or 0) + 1 end
+                return
+            end
+            S._curSpam = e
+        end
+    end
     counter += 1
     local parts = {}
     for i = 1, args.n do
@@ -226,6 +378,8 @@ local function record(dir, remote, method, args, caller)
     local blob = {pk.dir, pk.name, pk.path, pk.method}
     for _, p in ipairs(parts) do blob[#blob + 1] = p.text if p.decoded then blob[#blob + 1] = p.decoded end end
     pk.search = table.concat(blob, " "):lower()
+    if S._curSpam then S._curSpam.pk = pk S._curSpam = nil end
+    if S._curShape then S._curShape.pk = pk S._curShape = nil end
     table.insert(S.Packets, pk)
     if #S.Packets > S.MaxPackets then table.remove(S.Packets, 1) end
     if S.OnPacket then task.defer(S.OnPacket, pk) end
@@ -350,6 +504,7 @@ function S.PacketText(pk)
         "Class:  " .. pk.class,
         "Caller: " .. tostring(pk.caller)
     }
+    if pk.repeats then L[#L + 1] = ("Repeats (spam disembunyikan): +%d"):format(pk.repeats) end
     for i, p in ipairs(pk.args) do
         L[#L + 1] = ("Arg%d (%s): %s"):format(i, typeof(p.raw), p.text)
         if p.decoded and p.how ~= "plain" then L[#L + 1] = ("   decoded[%s]: %s"):format(p.how, p.decoded)
@@ -1775,6 +1930,11 @@ feature("Target", "Packets")({
         FilterCard:Toggle("Include Executor Calls", "PkIncludeExec", S.IncludeExecutor, function(val)
             SetIncludeExec(val)
         end)
+        FilterCard:Toggle("Hide Ping/Spam (auto)", "PkHideSpam", S.HideSpam, function(val)
+            S.HideSpam = (val == true)
+            if not S.HideSpam then table.clear(S.SpamSeen) table.clear(S.ShapeSeen) end
+            say("Hide ping/spam: " .. (S.HideSpam and "ON" or "OFF"))
+        end)
     end),
 
     right = right(function(r)
@@ -1798,6 +1958,11 @@ feature("Target", "Packets")({
             else
                 say("Clipboard unsupported in this executor")
             end
+        end)
+        InspectCard:Button("Ignore Remote Name (ping)", "IGNORE", "Shield", function()
+            if not curPk then say("Select a packet first") return end
+            S.IgnoreNames[curPk.name] = true
+            say("Ignoring all packets from: " .. tostring(curPk.name))
         end)
         InspectCard:Button("Block Selected Remote", "BLOCK", "Shield", function()
             if not curPk then say("Select a packet first") return end
@@ -1832,6 +1997,9 @@ feature("Target", "Packets")({
         end)
         ManageCard:Button("Unblock All Remotes & Rescan", "RESET", "Target", function()
             table.clear(S.Blocked)
+            table.clear(S.IgnoreNames)
+            table.clear(S.SpamSeen)
+            table.clear(S.ShapeSeen)
             local list = S.ScanRemotes()
             RemoteCountCache = #list
             say("Unblocked all & watching " .. tostring(#list) .. " remotes")
