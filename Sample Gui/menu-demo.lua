@@ -393,20 +393,16 @@ task.spawn(function()
 end)
 
 -- =========================================================================
--- LOGIKA SET CLOTHES + DEEP TEXTURE/SPRITESHEET RESOLVER + REDESIGNED UI
---  * Memperbaiki gambar rbxassetid yang tidak muncul dengan memanggil langsung
---    konstruktor/fungsi asli ReplicatedStorage.Shared.ItemIcon + ekstraksi
---    upvalue sheet dari ItemIcon, ClothesDB (Part1..Part5), dan Assets.
---  * Bar "Pakaian Dipakai Saat Ini" diperbagus: tampil sebagai kartu mini
---    dengan gambar ikon item + nama + slot, dan cukup 1x TAP untuk langsung copot!
---  * Tombol UNWEAR ALL dirombak menjadi tombol pill modern yang proporsional & elegan.
+-- LOGIKA SET CLOTHES (IKON ASLI GAME + LIST SMOOTH + 1x TAP)
+--  * Gambar item memakai ReplicatedStorage.Shared.ItemIcon (modul asli game).
+--  * Katalog ter-virtualisasi, bisa dicari, scroll mulus.
+--  * 1x tap = pakai / lepas. Lepas = slot kembali ke set awal, langsung
+--    hilang dari bar "Sedang Dipakai".
 -- =========================================================================
 local SC = {
     DB = nil,
-    ClothesDB = nil,
     ItemIcon = nil,
     Assets = nil,
-    DiscoveredSheets = {},
     Items = nil,
     ItemMap = {},
     Slots = { "All" },
@@ -424,8 +420,6 @@ local SC = {
     SelectedSlot = "All",
     UpdateUIFn = nil,
     RefreshWornBarFn = nil,
-    LastTapId = nil,
-    LastTapTime = 0,
     LastWornSignature = "",
 }
 
@@ -524,354 +518,87 @@ local function scFindWorn()
     return nil, "Tabel pakaian belum ditemukan (pastikan sudah masuk ke dalam world)"
 end
 
--- Normalisasi string rbxassetid
-local function normalizeAssetId(raw)
-    if type(raw) == "number" and raw > 0 then
-        return "rbxassetid://" .. tostring(raw)
-    elseif type(raw) == "string" then
-        raw = vnTrim(raw)
-        if raw:find("^rbxassetid://%d+") or raw:find("^rbxthumb://") or raw:find("^http") then
-            return raw
-        end
-        local digits = raw:match("(%d%d%d%d%d+)")
-        if digits then
-            return "rbxassetid://" .. digits
-        end
-    end
+-- =========================================================================
+-- IKON ITEM: MEMAKAI MODUL ASLI GAME (ItemIcon.new / ItemIcon.set)
+--  ItemIcon.set membaca atlas + tx/ty + tint dari ItemDB dengan benar
+--  (termasuk aloneCell & aturan sepatu), jadi gambar selalu cocok dengan
+--  tampilan di inventori game. Ada fallback manual bila modul gagal.
+-- =========================================================================
+local function scAtlasUrl(atlasName)
+    if type(atlasName) ~= "string" then return nil end
+    local A = SC.Assets and SC.Assets.Atlas
+    if type(A) == "table" then return A[atlasName] end
     return nil
 end
 
--- Scan semua string rbxassetid di dalam tabel / upvalues modul (ItemIcon, Assets, ClothesDB)
-local function scanTableForAssets(tbl, out, visited, depth)
-    if type(tbl) ~= "table" or (depth or 0) > 4 then return end
-    visited = visited or {}
-    if visited[tbl] then return end
-    visited[tbl] = true
-
-    for k, v in pairs(tbl) do
-        if type(v) == "string" or type(v) == "number" then
-            local aid = normalizeAssetId(v)
-            if aid then
-                out[tostring(k):lower()] = aid
-                out[#out + 1] = aid
-            end
-        elseif type(v) == "table" then
-            scanTableForAssets(v, out, visited, (depth or 0) + 1)
-        end
-    end
-end
-
-local function scanFunctionUpvaluesForAssets(fn, out, visited, depth)
-    if type(fn) ~= "function" or (depth or 0) > 3 then return end
-    visited = visited or {}
-    if visited[fn] then return end
-    visited[fn] = true
-
-    if type(debug) == "table" and type(debug.getupvalues) == "function" then
-        local ok, ups = pcall(debug.getupvalues, fn)
-        if ok and type(ups) == "table" then
-            for k, v in pairs(ups) do
-                if type(v) == "string" or type(v) == "number" then
-                    local aid = normalizeAssetId(v)
-                    if aid then
-                        out[tostring(k):lower()] = aid
-                        out[#out + 1] = aid
-                    end
-                elseif type(v) == "table" then
-                    scanTableForAssets(v, out, visited, (depth or 0) + 1)
-                elseif type(v) == "function" then
-                    scanFunctionUpvaluesForAssets(v, out, visited, (depth or 0) + 1)
-                end
-            end
-        end
-    end
-    if type(debug) == "table" and type(debug.getconstants) == "function" then
-        local ok, consts = pcall(debug.getconstants, fn)
-        if ok and type(consts) == "table" then
-            for _, v in pairs(consts) do
-                if type(v) == "string" then
-                    local aid = normalizeAssetId(v)
-                    if aid then out[#out + 1] = aid end
-                end
-            end
-        end
-    end
-end
-
--- Ekstrak data texture (image, rectOffset, rectSize) dari berbagai kemungkinan struktur data item
-local function extractTextureInfoFromTable(tbl)
-    if type(tbl) ~= "table" then return nil, nil, nil end
-
-    local rawImg = tbl.image or tbl.Image or tbl.icon or tbl.Icon or tbl.texture or tbl.Texture
-        or tbl.asset or tbl.Asset or tbl.sheet or tbl.Sheet or tbl.atlas or tbl.decal or tbl.id or tbl[1]
-    local img = normalizeAssetId(rawImg)
-
-    local ro = tbl.rectOffset or tbl.ImageRectOffset or tbl.offset or tbl.uv or tbl.pos
-    local rs = tbl.rectSize or tbl.ImageRectSize or tbl.size or tbl.dim
-
-    if type(ro) == "table" then
-        local rx = ro.X or ro.x or ro[1]
-        local ry = ro.Y or ro.y or ro[2]
-        if type(rx) == "number" and type(ry) == "number" then ro = Vector2.new(rx, ry) else ro = nil end
-    elseif typeof(ro) ~= "Vector2" then
-        ro = nil
-    end
-
-    if type(rs) == "table" then
-        local sx = rs.X or rs.x or rs.w or rs[1]
-        local sy = rs.Y or rs.y or rs.h or rs[2]
-        if type(sx) == "number" and type(sy) == "number" then rs = Vector2.new(sx, sy) else rs = nil end
-    elseif type(rs) == "number" then
-        rs = Vector2.new(rs, rs)
-    elseif typeof(rs) ~= "Vector2" then
-        rs = nil
-    end
-
-    -- Jika tabel punya koordinat grid (x, y / tx, ty / col, row) untuk spritesheet 32x32 atau 16x16
-    if not ro then
-        local gx = tbl.tx or tbl.ix or tbl.col or tbl.gridX or (type(tbl.x) == "number" and tbl.x)
-        local gy = tbl.ty or tbl.iy or tbl.row or tbl.gridY or (type(tbl.y) == "number" and tbl.y)
-        local tileSz = tbl.tileSize or tbl.cellSize or tbl.size or 32
-        if type(tileSz) ~= "number" then tileSz = 32 end
-        if type(gx) == "number" and type(gy) == "number" then
-            if gx < 64 and gy < 64 then
-                ro = Vector2.new(gx * tileSz, gy * tileSz)
-                rs = rs or Vector2.new(tileSz, tileSz)
-            else
-                ro = Vector2.new(gx, gy)
-                rs = rs or Vector2.new(tileSz, tileSz)
-            end
-        end
-    end
-
-    return img, ro, rs
-end
-
--- Pasang ikon item langsung ke container menggunakan modul asli `ItemIcon` atau data hasil ekstraksi
-local function scRenderItemIconInto(containerFrame, item)
-    if not containerFrame or not item then return "rbxassetid://0" end
-
-    for _, ch in ipairs(containerFrame:GetChildren()) do
-        if not ch:IsA("UICorner") and not ch:IsA("UIStroke") then
-            ch:Destroy()
-        end
-    end
-
-    local targetImg = Instance.new("ImageLabel")
-    targetImg.Name = "ItemTex"
-    targetImg.Size = UDim2.new(1, -6, 1, -6)
-    targetImg.Position = UDim2.new(0, 3, 0, 3)
-    targetImg.BackgroundTransparency = 1
-    targetImg.ScaleType = Enum.ScaleType.Fit
-    targetImg.ResampleMode = Enum.ResamplerMode.Pixelated
-    targetImg.Image = "rbxassetid://0"
-    targetImg.Parent = containerFrame
-
-    local appliedAsset = nil
-
-    -- 1. Coba panggil modul `ItemIcon` asli milik game (mendukung semua pola fungsi/tabel)
+-- Buat 1 ikon (Frame + layer Base/Over) di dalam holder. Dibuat sekali, dipakai ulang.
+local function scMakeIcon(holder, z)
     local II = SC.ItemIcon
-    if II then
-        if type(II) == "function" then
-            -- Pola A: ItemIcon(targetImg, itemId) atau ItemIcon(containerFrame, itemId)
-            local ok1, res1, rOff1, rSz1 = pcall(II, targetImg, item.id)
-            if ok1 and targetImg.Image ~= "" and targetImg.Image ~= "rbxassetid://0" then
-                appliedAsset = targetImg.Image
-            elseif ok1 and typeof(res1) == "Instance" then
-                pcall(function()
-                    res1.Parent = containerFrame
-                    if res1:IsA("GuiObject") then
-                        res1.Size = UDim2.new(1, -4, 1, -4)
-                        res1.Position = UDim2.new(0, 2, 0, 2)
-                    end
-                    local il = res1:IsA("ImageLabel") and res1 or res1:FindFirstChildWhichIsA("ImageLabel", true)
-                    if il then
-                        appliedAsset = il.Image
-                        targetImg:Destroy()
-                    end
-                end)
-            else
-                -- Pola B: ItemIcon(itemId) atau ItemIcon(item.raw)
-                local ok2, res2, rOff2, rSz2 = pcall(II, item.id)
-                if not ok2 or not res2 then ok2, res2, rOff2, rSz2 = pcall(II, item.raw) end
-                if ok2 and res2 then
-                    if typeof(res2) == "Instance" then
-                        pcall(function()
-                            res2.Parent = containerFrame
-                            if res2:IsA("GuiObject") then
-                                res2.Size = UDim2.new(1, -4, 1, -4)
-                                res2.Position = UDim2.new(0, 2, 0, 2)
-                            end
-                            local il = res2:IsA("ImageLabel") and res2 or res2:FindFirstChildWhichIsA("ImageLabel", true)
-                            if il then
-                                appliedAsset = il.Image
-                                targetImg:Destroy()
-                            end
-                        end)
-                    elseif type(res2) == "table" then
-                        local eImg, eRo, eRs = extractTextureInfoFromTable(res2)
-                        if eImg then
-                            targetImg.Image = eImg
-                            if eRo then targetImg.ImageRectOffset = eRo end
-                            if eRs then targetImg.ImageRectSize = eRs end
-                            appliedAsset = eImg
-                        end
-                    elseif type(res2) == "string" or type(res2) == "number" then
-                        local aid = normalizeAssetId(res2)
-                        if aid then
-                            targetImg.Image = aid
-                            if typeof(rOff2) == "Vector2" then targetImg.ImageRectOffset = rOff2 end
-                            if typeof(rSz2) == "Vector2" then targetImg.ImageRectSize = rSz2 end
-                            appliedAsset = aid
-                        end
-                    end
-                end
-            end
-        elseif type(II) == "table" then
-            for _, fnName in ipairs({ "apply", "Apply", "set", "Set", "render", "Render", "update", "Update", "mount" }) do
-                local fn = II[fnName]
-                if type(fn) == "function" and not appliedAsset then
-                    pcall(fn, targetImg, item.id)
-                    if targetImg.Image == "" or targetImg.Image == "rbxassetid://0" then
-                        pcall(fn, II, targetImg, item.id)
-                    end
-                    if targetImg.Image == "" or targetImg.Image == "rbxassetid://0" then
-                        pcall(fn, targetImg, item.raw)
-                    end
-                    if targetImg.Image ~= "" and targetImg.Image ~= "rbxassetid://0" then
-                        appliedAsset = targetImg.Image
-                        break
-                    end
-                    local childImg = containerFrame:FindFirstChildWhichIsA("ImageLabel", true)
-                    if childImg and childImg ~= targetImg and childImg.Image ~= "" then
-                        appliedAsset = childImg.Image
-                        targetImg:Destroy()
-                        break
-                    end
-                end
-            end
-
-            if not appliedAsset then
-                for _, fnName in ipairs({ "get", "Get", "getIcon", "GetIcon", "icon", "Icon", "new", "create", "Create", "resolve" }) do
-                    local fn = II[fnName]
-                    if type(fn) == "function" then
-                        local ok, res, rOff, rSz = pcall(fn, item.id)
-                        if not ok or not res then ok, res, rOff, rSz = pcall(fn, II, item.id) end
-                        if not ok or not res then ok, res, rOff, rSz = pcall(fn, item.raw) end
-                        if ok and res then
-                            if typeof(res) == "Instance" then
-                                pcall(function()
-                                    res.Parent = containerFrame
-                                    if res:IsA("GuiObject") then
-                                        res.Size = UDim2.new(1, -4, 1, -4)
-                                        res.Position = UDim2.new(0, 2, 0, 2)
-                                    end
-                                    local il = res:IsA("ImageLabel") and res or res:FindFirstChildWhichIsA("ImageLabel", true)
-                                    if il then appliedAsset = il.Image; targetImg:Destroy() end
-                                end)
-                                if appliedAsset then break end
-                            elseif type(res) == "table" then
-                                local eImg, eRo, eRs = extractTextureInfoFromTable(res)
-                                if eImg then
-                                    targetImg.Image = eImg
-                                    if eRo then targetImg.ImageRectOffset = eRo end
-                                    if eRs then targetImg.ImageRectSize = eRs end
-                                    appliedAsset = eImg
-                                    break
-                                end
-                            elseif type(res) == "string" or type(res) == "number" then
-                                local aid = normalizeAssetId(res)
-                                if aid then
-                                    targetImg.Image = aid
-                                    if typeof(rOff) == "Vector2" then targetImg.ImageRectOffset = rOff end
-                                    if typeof(rSz) == "Vector2" then targetImg.ImageRectSize = rSz end
-                                    appliedAsset = aid
-                                    break
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+    if type(II) == "table" and type(II.new) == "function" then
+        local ok, res = pcall(II.new, holder, UDim2.new(1, -6, 1, -6), z or 3)
+        if ok and type(res) == "table" and typeof(res.frame) == "Instance" and res.base and res.over then
+            res.frame.Position = UDim2.fromOffset(3, 3)
+            return res
         end
     end
-
-    -- 2. Jika belum dapat dari fungsi ItemIcon, gunakan pre-resolved icon & rect dari ItemDB / ClothesDB / Assets
-    if not appliedAsset and targetImg and targetImg.Parent then
-        if item.icon and item.icon ~= "rbxassetid://0" then
-            targetImg.Image = item.icon
-            if typeof(item.rectOffset) == "Vector2" then targetImg.ImageRectOffset = item.rectOffset end
-            if typeof(item.rectSize) == "Vector2" then targetImg.ImageRectSize = item.rectSize end
-            appliedAsset = item.icon
-        end
+    -- fallback: struktur sama dengan ItemIcon.new
+    local f = Instance.new("Frame")
+    f.Name = "Icon"
+    f.BackgroundTransparency = 1
+    f.Size = UDim2.new(1, -6, 1, -6)
+    f.Position = UDim2.fromOffset(3, 3)
+    f.ZIndex = z or 3
+    f.Parent = holder
+    local function layer(n)
+        local l = Instance.new("ImageLabel")
+        l.Name = n
+        l.BackgroundTransparency = 1
+        l.Size = UDim2.fromScale(1, 1)
+        l.AnchorPoint = Vector2.new(0.5, 0.5)
+        l.Position = UDim2.fromScale(0.5, 0.5)
+        l.ResampleMode = Enum.ResamplerMode.Pixelated
+        l.ZIndex = z or 3
+        l.Parent = f
+        return l
     end
-
-    if appliedAsset and appliedAsset ~= "rbxassetid://0" then
-        item.icon = appliedAsset
-        item.assetNum = tostring(appliedAsset):match("(%d+)") or item.assetNum
-    end
-
-    return appliedAsset or item.icon or "rbxassetid://0"
+    return { frame = f, base = layer("Base"), over = layer("Over") }
 end
 
-local function scResolveStaticItemTexture(id, it)
-    -- Cek langsung di tabel ItemDB[id]
-    local img, ro, rs = extractTextureInfoFromTable(it)
-    if img then return img, ro, rs end
-
-    -- Cek di ClothesDB (termasuk sub-tabel slot atau ID)
-    if type(SC.ClothesDB) == "table" then
-        local cEntry = SC.ClothesDB[id] or SC.ClothesDB[tostring(id)] or SC.ClothesDB[it.name]
-            or (it.slot and SC.ClothesDB[it.slot] and (SC.ClothesDB[it.slot][id] or SC.ClothesDB[it.slot][it.name]))
-        if type(cEntry) == "table" then
-            local cImg, cRo, cRs = extractTextureInfoFromTable(cEntry)
-            if cImg then return cImg, cRo or ro, cRs or rs end
-            for _, sub in pairs(cEntry) do
-                if type(sub) == "table" then
-                    local sImg, sRo, sRs = extractTextureInfoFromTable(sub)
-                    if sImg then return sImg, sRo or cRo or ro, sRs or cRs or rs end
-                elseif type(sub) == "string" or type(sub) == "number" then
-                    local aid = normalizeAssetId(sub)
-                    if aid then return aid, cRo or ro, cRs or rs end
-                end
-            end
-        elseif type(cEntry) == "string" or type(cEntry) == "number" then
-            local aid = normalizeAssetId(cEntry)
-            if aid then return aid, ro, rs end
-        end
+-- Isi ikon dengan gambar item `id`
+local function scSetIcon(icon, id)
+    if not icon then return end
+    local II = SC.ItemIcon
+    if type(II) == "table" and type(II.set) == "function" then
+        if pcall(II.set, icon, id) then return end
     end
-
-    -- Cek di Assets
-    if type(SC.Assets) == "table" then
-        for _, key in ipairs({ it.name, id, tostring(id), it.tex, it.sheet, it.icon, it.slot }) do
-            if key and SC.Assets[key] then
-                local aVal = SC.Assets[key]
-                if type(aVal) == "table" then
-                    local aImg, aRo, aRs = extractTextureInfoFromTable(aVal)
-                    if aImg then return aImg, aRo or ro, aRs or rs end
-                else
-                    local aid = normalizeAssetId(aVal)
-                    if aid then return aid, ro, rs end
-                end
-            end
-        end
+    -- fallback manual (meniru ItemIcon.set untuk item atlas)
+    local it = SC.DB and SC.DB[id]
+    local url = it and scAtlasUrl(it.atlas)
+    if not url then
+        icon.frame.Visible = false
+        return
     end
-
-    -- Jika item memiliki koordinat sprite (`ro`) atau `page`/`sheet` index, pasangkan dengan sheet dari DiscoveredSheets
-    local sheetIdx = tonumber(it.sheet or it.page or it.atlas or 1) or 1
-    local fallbackSheet = SC.DiscoveredSheets[tostring(it.sheet or ""):lower()]
-        or SC.DiscoveredSheets[tostring(it.slot or ""):lower()]
-        or SC.DiscoveredSheets["icons"]
-        or SC.DiscoveredSheets["items"]
-        or SC.DiscoveredSheets["clothes"]
-        or SC.DiscoveredSheets[sheetIdx]
-        or SC.DiscoveredSheets[1]
-
-    if fallbackSheet then
-        return fallbackSheet, ro, rs
+    local cx, cy = it.tx or 0, it.ty or 0
+    if SC.Autotile and type(SC.Autotile.aloneCell) == "function" then
+        local ok, a, b = pcall(SC.Autotile.aloneCell, it)
+        if ok and type(a) == "number" and type(b) == "number" then cx, cy = a, b end
     end
-
-    return "rbxassetid://0", ro, rs
+    if it.kind == "cloth" and it.slot == "feet" then cy = cy * 2 end
+    icon.base.Image = url
+    icon.base.ImageRectSize = Vector2.new(32, 32)
+    icon.base.ImageRectOffset = Vector2.new(cx * 32, cy * 32)
+    icon.base.ImageColor3 = it.tint or Color3.new(1, 1, 1)
+    icon.base.Size = UDim2.fromScale(1, 1)
+    local oc = it.overCell
+    icon.over.Visible = oc ~= nil
+    if oc then
+        icon.over.Image = url
+        icon.over.ImageRectSize = Vector2.new(32, 32)
+        icon.over.ImageRectOffset = Vector2.new(oc[1] * 32, oc[2] * 32)
+        icon.over.ImageColor3 = Color3.new(1, 1, 1)
+        icon.over.Size = UDim2.fromScale(1, 1)
+    end
+    icon.frame.Visible = true
 end
 
 local function scBuildItems()
@@ -883,54 +610,30 @@ local function scBuildItems()
     if not ok or type(DB) ~= "table" then return false end
 
     pcall(function() SC.ItemIcon = require(sh:FindFirstChild("ItemIcon")) end)
-    pcall(function() SC.ClothesDB = require(sh:FindFirstChild("ClothesDB")) end)
     pcall(function() SC.Assets = require(sh:FindFirstChild("Assets")) end)
+    pcall(function() SC.Autotile = require(sh:FindFirstChild("Autotile")) end)
     pcall(function() SC.PlayerSprite = require(sh:FindFirstChild("PlayerSprite")) end)
 
-    -- Kumpulkan semua sheet rbxassetid dari ItemIcon, Assets, dan ClothesDB (termasuk Part1..Part5)
-    SC.DiscoveredSheets = {}
-    if type(SC.ItemIcon) == "function" then
-        scanFunctionUpvaluesForAssets(SC.ItemIcon, SC.DiscoveredSheets)
-    elseif type(SC.ItemIcon) == "table" then
-        scanTableForAssets(SC.ItemIcon, SC.DiscoveredSheets)
-        for _, v in pairs(SC.ItemIcon) do
-            if type(v) == "function" then
-                scanFunctionUpvaluesForAssets(v, SC.DiscoveredSheets)
-            end
-        end
-    end
-    if type(SC.Assets) == "table" then
-        scanTableForAssets(SC.Assets, SC.DiscoveredSheets)
-    end
-    if type(SC.ClothesDB) == "table" then
-        scanTableForAssets(SC.ClothesDB, SC.DiscoveredSheets)
-    end
-
-    local items = {}
-    local itemMap = {}
-    local slotMap = {}
+    local items, itemMap, slotMap = {}, {}, {}
 
     for id, it in pairs(DB) do
         if type(id) == "number" and type(it) == "table" then
-            local isCloth = (it.kind == "cloth" or it.kind == "clothes" or it.kind == "wearable" or (type(it.slot) == "string" and it.slot ~= ""))
+            local isCloth = (it.kind == "cloth" or it.kind == "clothes" or it.kind == "wearable"
+                or (type(it.slot) == "string" and it.slot ~= ""))
             if isCloth and type(it.slot) == "string" and type(it.name) == "string" and not it.name:find(" Seed$") then
-                local iconUrl, rectOff, rectSz = scResolveStaticItemTexture(id, it)
-                local rawAssetNum = tostring(iconUrl):match("(%d+)") or "0"
-                if rawAssetNum == "0" then rawAssetNum = "AutoSheet" end
+                local url = scAtlasUrl(it.atlas)
+                local num = url and tostring(url):match("(%d+)") or "-"
                 local slotClean = it.slot:lower()
                 slotMap[slotClean] = true
-
                 local entry = {
                     id = id,
                     name = it.name,
                     lname = it.name:lower(),
                     slot = slotClean,
-                    icon = iconUrl,
-                    assetNum = rawAssetNum,
-                    rectOffset = rectOff,
-                    rectSize = rectSz,
+                    icon = url,
+                    assetNum = num,
                     doubleJump = it.doubleJump and true or false,
-                    raw = it
+                    raw = it,
                 }
                 items[#items + 1] = entry
                 itemMap[id] = entry
@@ -955,6 +658,7 @@ local function scBuildItems()
     SC.Slots = slotList
     return #items > 0
 end
+
 
 -- =========================================================================
 -- ANTI-DETECTION & PACKET TRAFFIC GUARD (WEAR, MOVE, STATE)
@@ -1272,8 +976,10 @@ local function scResolve(tok)
     return best
 end
 
--- Lepas spesifik 1 slot (1x Tap pada Bar Item Dipakai di Atas)
-local function scUnwearSlot(slotName)
+-- Lepas 1 slot = kembalikan slot itu ke SET AWAL (pakaian asli dari server).
+-- Kalau slot itu memang item asli (bukan hasil pasang visual), item dilepas.
+-- Tanpa notifikasi supaya tap terasa langsung.
+local function scRemoveSlot(slotName)
     local worn, err = scFindWorn()
     if not worn then
         notifyClient("Set Clothes", tostring(err), 3)
@@ -1283,17 +989,18 @@ local function scUnwearSlot(slotName)
     scHook()
     scEnsureLoop()
 
-    local oldId = worn[slotName]
-    local itemName = (oldId and SC.DB and SC.DB[oldId] and SC.DB[oldId].name) or tostring(slotName)
-
     scMutate(function(W)
-        W[slotName] = nil
+        local o = SC.Ov[slotName]
+        if o then
+            W[slotName] = o.real
+        else
+            W[slotName] = nil
+        end
     end)
-    notifyClient("Unwear Item", string.format("Dilepas: %s [%s]", itemName, tostring(slotName):upper()), 2)
 end
 
--- Toggle pakai / lepas 1 item dari ListCard Katalog (Double-Tap)
-local function scToggleSingleItem(id)
+-- 1x tap pada item di katalog: pakai kalau belum dipakai, kembali ke awal kalau sudah dipakai
+local function scTapItem(id)
     local worn, err = scFindWorn()
     if not worn then
         notifyClient("Set Clothes", tostring(err), 4)
@@ -1304,18 +1011,18 @@ local function scToggleSingleItem(id)
     scEnsureLoop()
 
     local it = SC.DB[id]
-    if not it or not it.slot then return end
+    if not it or type(it.slot) ~= "string" then return end
 
-    scMutate(function(W)
-        if W[it.slot] == id then
-            W[it.slot] = nil
-        else
+    if worn[it.slot] == id then
+        scRemoveSlot(it.slot)
+    else
+        scMutate(function(W)
             scWearInto(W, id)
-        end
-    end)
+        end)
+    end
 end
 
--- Unwear All (Lepas semua pakaian secara visual di client)
+-- Unwear All (lepas semua pakaian secara visual di client)
 local function scUnwearAll()
     local worn, err = scFindWorn()
     if not worn then
@@ -1331,7 +1038,6 @@ local function scUnwearAll()
             W[slot] = nil
         end
     end)
-    notifyClient("Set Clothes", "Semua pakaian berhasil dilepas (Unwear All)", 3)
 end
 
 local function scSet()
@@ -1386,10 +1092,169 @@ local function scReset()
 end
 
 -- =========================================================================
--- REDESIGNED IN-GUI CLOTHES BROWSER & WORN BAR (TANPA MEMBUAT WINDOW BARU)
---  * Bagian Atas: Bar "Sedang Dipakai" dengan kartu mini ber-ikon + 1x Tap Copot
---  * Tombol UNWEAR ALL: Pill button modern dark-crimson dengan stroke halus
---  * Bagian Bawah: Katalog ListCard dengan gambar rbxassetid asli + 2x Tap Pakai
+-- HELPER UI: FONT, LIST TER-VIRTUALISASI (SMOOTH), PENCARI ANCHOR
+-- =========================================================================
+local UIFONT = {
+    bold = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal),
+    med  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
+    reg  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal),
+}
+
+local function lockFont(guiObj, fontFace)
+    guiObj:SetAttribute("R8DV_SkipLight", true)
+    guiObj.FontFace = fontFace
+    guiObj:GetPropertyChangedSignal("FontFace"):Connect(function()
+        if guiObj.FontFace ~= fontFace then
+            guiObj.FontFace = fontFace
+        end
+    end)
+end
+
+local function uiCorner(parent, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 6)
+    c.Parent = parent
+    return c
+end
+
+local function uiStroke(parent, color, thick)
+    local s = Instance.new("UIStroke")
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Color = color
+    s.Thickness = thick or 1
+    s.Parent = parent
+    return s
+end
+
+local function uiLabel(parent, text, size, color, font, xAlign)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.TextSize = size
+    l.TextColor3 = color
+    l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
+    l.TextTruncate = Enum.TextTruncate.AtEnd
+    l.Text = text
+    lockFont(l, font or UIFONT.med)
+    l.Parent = parent
+    return l
+end
+
+-- List virtual: hanya ~12 baris yang benar-benar dibuat (di-pool), isinya di-bind ulang
+-- saat scroll. Jumlah item ribuan pun tetap ringan dan scroll mulus.
+--   opts.rowH, opts.gap, opts.pad, opts.size, opts.position, opts.bg
+--   opts.makeRow(scroll) -> { frame = GuiObject, ... }
+--   opts.bind(row, item, idx)
+local function newVList(parent, opts)
+    local rowH = opts.rowH
+    local gap = opts.gap or 6
+    local pad = opts.pad or 8
+    local step = rowH + gap
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = opts.name or "VList"
+    scroll.Size = opts.size
+    scroll.Position = opts.position
+    scroll.BackgroundColor3 = opts.bg or Color3.fromRGB(12, 13, 17)
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 5
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 85, 100)
+    scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    scroll.CanvasSize = UDim2.new()
+    scroll.Parent = parent
+    uiCorner(scroll, 8)
+    uiStroke(scroll, Color3.fromRGB(32, 34, 42), 1)
+
+    local V = { Scroll = scroll, Data = {}, Pool = {} }
+
+    local function ensurePool()
+        local h = scroll.AbsoluteWindowSize.Y
+        if h <= 0 then h = 360 end
+        local need = math.ceil(h / step) + 3
+        while #V.Pool < need do
+            local row = opts.makeRow(scroll)
+            row.frame.Size = UDim2.new(1, -(pad * 2 + 6), 0, rowH)
+            row.frame.Visible = false
+            V.Pool[#V.Pool + 1] = row
+        end
+        return #V.Pool
+    end
+
+    function V:Layout()
+        local n = ensurePool()
+        local data = self.Data
+        local total = #data
+        local top = scroll.CanvasPosition.Y
+        local first = math.max(1, math.floor((top - pad) / step) + 1)
+        local last = math.min(total, first + n - 1)
+        local used = {}
+        for idx = first, last do
+            local row = self.Pool[(idx - 1) % n + 1]
+            used[row] = true
+            local item = data[idx]
+            if row.idx ~= idx or row.item ~= item or row.dirty then
+                row.idx = idx
+                row.item = item
+                row.dirty = false
+                row.frame.Position = UDim2.new(0, pad, 0, pad + (idx - 1) * step)
+                opts.bind(row, item, idx)
+            end
+            row.frame.Visible = true
+        end
+        for _, row in ipairs(self.Pool) do
+            if not used[row] then
+                row.frame.Visible = false
+                row.idx = nil
+                row.item = nil
+            end
+        end
+    end
+
+    function V:SetData(data, toTop)
+        self.Data = data or {}
+        local total = #self.Data
+        local h = total > 0 and (pad * 2 + total * step - gap) or 0
+        scroll.CanvasSize = UDim2.fromOffset(0, h)
+        if toTop then scroll.CanvasPosition = Vector2.new(0, 0) end
+        for _, row in ipairs(self.Pool) do row.dirty = true end
+        self:Layout()
+    end
+
+    -- bind ulang baris yang sedang tampil (mis. setelah status pakai berubah)
+    function V:Refresh()
+        for _, row in ipairs(self.Pool) do row.dirty = true end
+        self:Layout()
+    end
+
+    scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() V:Layout() end)
+    scroll:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(function() V:Layout() end)
+    return V
+end
+
+-- Cari card (berdasarkan teks judul) lalu kembalikan container Frame-nya
+local function findAnchorContainer(text, tries, waitT)
+    for _ = 1, tries or 20 do
+        for _, root in ipairs(lightFindRoots()) do
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text:find(text, 1, true) then
+                    local c = d.Parent
+                    while c and not (c:IsA("Frame") or c:IsA("ScrollingFrame")) do
+                        c = c.Parent
+                    end
+                    if c then return c, d end
+                end
+            end
+        end
+        task.wait(waitT or 0.3)
+    end
+    return nil
+end
+
+-- =========================================================================
+-- BROWSER CLOTHES (EMBEDDED, TANPA WINDOW BARU)
+--  * Atas  : "Sedang Dipakai" (kartu mini + ikon asli). 1x tap = lepas /
+--            kembali ke set awal untuk slot itu, langsung hilang dari bar.
+--  * Bawah : Katalog semua item, list ter-virtualisasi (smooth), bisa
+--            dicari (nama / ID / slot / asset). 1x tap = pakai / lepas.
 -- =========================================================================
 local function scMountEmbeddedBrowser()
     task.spawn(function()
@@ -1398,64 +1263,22 @@ local function scMountEmbeddedBrowser()
         pcall(scFindWorn)
         scEnsureLoop()
 
-        local targetAnchor = nil
-        for _ = 1, 20 do
-            for _, root in ipairs(lightFindRoots()) do
-                for _, d in ipairs(root:GetDescendants()) do
-                    if d:IsA("TextLabel") and d.Text:find("KATALOG VISUAL CLOTHES", 1, true) then
-                        targetAnchor = d
-                        break
-                    end
-                end
-                if targetAnchor then break end
-            end
-            if targetAnchor then break end
-            task.wait(0.3)
-        end
-
-        if not targetAnchor then return end
-        local cardContainer = targetAnchor.Parent
-        while cardContainer and not (cardContainer:IsA("Frame") or cardContainer:IsA("ScrollingFrame")) do
-            cardContainer = cardContainer.Parent
-        end
+        local cardContainer = findAnchorContainer("KATALOG VISUAL CLOTHES", 30, 0.3)
         if not cardContainer then return end
         local oldBrowser = cardContainer:FindFirstChild("R8DV_EmbeddedClothesBrowser")
         if oldBrowser then oldBrowser:Destroy() end
 
-        local CLEAN_FONT_BOLD = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal)
-        local CLEAN_FONT_MED  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
-        local CLEAN_FONT_REG  = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
-
-        local function lockFont(guiObj, fontFace)
-            guiObj:SetAttribute("R8DV_SkipLight", true)
-            guiObj.FontFace = fontFace
-            guiObj:GetPropertyChangedSignal("FontFace"):Connect(function()
-                if guiObj.FontFace ~= fontFace then
-                    guiObj.FontFace = fontFace
-                end
-            end)
-        end
-
         local holder = Instance.new("Frame")
         holder.Name = "R8DV_EmbeddedClothesBrowser"
-        holder.Size = UDim2.new(1, 0, 0, 465)
+        holder.Size = UDim2.new(1, 0, 0, 480)
         holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
         holder.BorderSizePixel = 0
         holder.LayoutOrder = 99
         holder.Parent = cardContainer
+        uiCorner(holder, 10)
+        uiStroke(holder, Color3.fromRGB(38, 40, 48), 1)
 
-        local holderCorner = Instance.new("UICorner")
-        holderCorner.CornerRadius = UDim.new(0, 10)
-        holderCorner.Parent = holder
-
-        local holderStroke = Instance.new("UIStroke")
-        holderStroke.Color = Color3.fromRGB(38, 40, 48)
-        holderStroke.Thickness = 1
-        holderStroke.Parent = holder
-
-        -- =================================================================
-        -- PANEL ATAS: BAR ITEM DIPAKAI SAAT INI (1x TAP UNTUK COPOT)
-        -- =================================================================
+        -- ---------------- PANEL ATAS: SEDANG DIPAKAI ----------------
         local wornPanel = Instance.new("Frame")
         wornPanel.Name = "WornStatusPanel"
         wornPanel.Size = UDim2.new(1, -20, 0, 96)
@@ -1463,17 +1286,9 @@ local function scMountEmbeddedBrowser()
         wornPanel.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
         wornPanel.BorderSizePixel = 0
         wornPanel.Parent = holder
+        uiCorner(wornPanel, 8)
+        uiStroke(wornPanel, Color3.fromRGB(44, 48, 58), 1)
 
-        local wornCorner = Instance.new("UICorner")
-        wornCorner.CornerRadius = UDim.new(0, 8)
-        wornCorner.Parent = wornPanel
-
-        local wornStroke = Instance.new("UIStroke")
-        wornStroke.Color = Color3.fromRGB(44, 48, 58)
-        wornStroke.Thickness = 1
-        wornStroke.Parent = wornPanel
-
-        -- Header Bar di dalam WornPanel
         local headerBar = Instance.new("Frame")
         headerBar.Size = UDim2.new(1, -20, 0, 26)
         headerBar.Position = UDim2.new(0, 10, 0, 6)
@@ -1486,23 +1301,12 @@ local function scMountEmbeddedBrowser()
         statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
         statusDot.BorderSizePixel = 0
         statusDot.Parent = headerBar
+        uiCorner(statusDot, 99)
 
-        local dotCorner = Instance.new("UICorner")
-        dotCorner.CornerRadius = UDim.new(1, 0)
-        dotCorner.Parent = statusDot
-
-        local wornTitle = Instance.new("TextLabel")
+        local wornTitle = uiLabel(headerBar, "SEDANG DIPAKAI", 11, Color3.fromRGB(220, 225, 235), UIFONT.bold)
         wornTitle.Size = UDim2.new(1, -135, 1, 0)
         wornTitle.Position = UDim2.new(0, 13, 0, 0)
-        wornTitle.BackgroundTransparency = 1
-        wornTitle.TextSize = 11
-        wornTitle.TextColor3 = Color3.fromRGB(220, 225, 235)
-        wornTitle.TextXAlignment = Enum.TextXAlignment.Left
-        wornTitle.Text = "SEDANG DIPAKAI  •  TAP 1x ITEM UNTUK LEPAS"
-        lockFont(wornTitle, CLEAN_FONT_BOLD)
-        wornTitle.Parent = headerBar
 
-        -- Tombol UNWEAR ALL yang diperbagus (Sleek Dark-Crimson Pill Button)
         local unwearBtn = Instance.new("TextButton")
         unwearBtn.Name = "UnwearAllBtn"
         unwearBtn.Size = UDim2.new(0, 108, 0, 24)
@@ -1512,32 +1316,12 @@ local function scMountEmbeddedBrowser()
         unwearBtn.TextSize = 10
         unwearBtn.TextColor3 = Color3.fromRGB(255, 115, 125)
         unwearBtn.Text = "×  LEPAS SEMUA"
-        lockFont(unwearBtn, CLEAN_FONT_BOLD)
+        lockFont(unwearBtn, UIFONT.bold)
         unwearBtn.Parent = headerBar
+        uiCorner(unwearBtn, 6)
+        uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
+        unwearBtn.Activated:Connect(function() scUnwearAll() end)
 
-        local unwearCorner = Instance.new("UICorner")
-        unwearCorner.CornerRadius = UDim.new(0, 6)
-        unwearCorner.Parent = unwearBtn
-
-        local unwearStroke = Instance.new("UIStroke")
-        unwearStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        unwearStroke.Color = Color3.fromRGB(165, 55, 65)
-        unwearStroke.Thickness = 1
-        unwearStroke.Parent = unwearBtn
-
-        unwearBtn.MouseEnter:Connect(function()
-            unwearBtn.BackgroundColor3 = Color3.fromRGB(165, 45, 55)
-            unwearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        end)
-        unwearBtn.MouseLeave:Connect(function()
-            unwearBtn.BackgroundColor3 = Color3.fromRGB(45, 22, 26)
-            unwearBtn.TextColor3 = Color3.fromRGB(255, 115, 125)
-        end)
-        unwearBtn.MouseButton1Click:Connect(function()
-            scUnwearAll()
-        end)
-
-        -- Horizontal Scroll Kartu Mini Pakaian yang Sedang Dipakai
         local wornScroll = Instance.new("ScrollingFrame")
         wornScroll.Name = "WornItemsScroll"
         wornScroll.Size = UDim2.new(1, -20, 0, 54)
@@ -1548,7 +1332,7 @@ local function scMountEmbeddedBrowser()
         wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
         wornScroll.ScrollingDirection = Enum.ScrollingDirection.X
         wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
-        wornScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        wornScroll.CanvasSize = UDim2.new()
         wornScroll.Parent = wornPanel
 
         local wornLayout = Instance.new("UIListLayout")
@@ -1557,58 +1341,27 @@ local function scMountEmbeddedBrowser()
         wornLayout.VerticalAlignment = Enum.VerticalAlignment.Center
         wornLayout.Parent = wornScroll
 
-        -- =================================================================
-        -- SUB-BAR INFO FILTER & JUMLAH ITEM
-        -- =================================================================
-        local countLabel = Instance.new("TextLabel")
+        local countLabel = uiLabel(holder, "Memuat katalog pakaian...", 11, Color3.fromRGB(155, 160, 175), UIFONT.med)
         countLabel.Size = UDim2.new(1, -20, 0, 20)
         countLabel.Position = UDim2.new(0, 12, 0, 112)
-        countLabel.BackgroundTransparency = 1
-        countLabel.TextSize = 11
-        countLabel.TextColor3 = Color3.fromRGB(155, 160, 175)
-        countLabel.TextXAlignment = Enum.TextXAlignment.Left
-        countLabel.Text = "Memuat katalog pakaian..."
-        lockFont(countLabel, CLEAN_FONT_MED)
-        countLabel.Parent = holder
 
-        -- =================================================================
-        -- DAFTAR KARTU PAKAIAN SCROLLABLE (DENGAN GAMBAR RBXASSETID)
-        -- =================================================================
-        local listScroll = Instance.new("ScrollingFrame")
-        listScroll.Name = "ClothesListScroll"
-        listScroll.Size = UDim2.new(1, -20, 1, -146)
-        listScroll.Position = UDim2.new(0, 10, 0, 136)
-        listScroll.BackgroundColor3 = Color3.fromRGB(12, 13, 17)
-        listScroll.BorderSizePixel = 0
-        listScroll.ScrollBarThickness = 5
-        listScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 85, 100)
-        listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        listScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-        listScroll.Parent = holder
+        -- ---------------- STATE ----------------
+        local vlist
+        local matched = {}
 
-        local listCorner = Instance.new("UICorner")
-        listCorner.CornerRadius = UDim.new(0, 8)
-        listCorner.Parent = listScroll
+        -- ---------------- BAR "SEDANG DIPAKAI" ----------------
+        local function infoPill(text, w)
+            local pill = Instance.new("Frame")
+            pill.Size = UDim2.new(0, w, 0, 42)
+            pill.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
+            pill.BorderSizePixel = 0
+            pill.Parent = wornScroll
+            uiCorner(pill, 6)
+            local l = uiLabel(pill, text, 11, Color3.fromRGB(145, 150, 165), UIFONT.reg)
+            l.Size = UDim2.new(1, -16, 1, 0)
+            l.Position = UDim2.new(0, 10, 0, 0)
+        end
 
-        local listStroke = Instance.new("UIStroke")
-        listStroke.Color = Color3.fromRGB(32, 34, 42)
-        listStroke.Thickness = 1
-        listStroke.Parent = listScroll
-
-        local listLayout = Instance.new("UIListLayout")
-        listLayout.FillDirection = Enum.FillDirection.Vertical
-        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        listLayout.Padding = UDim.new(0, 6)
-        listLayout.Parent = listScroll
-
-        local listPad = Instance.new("UIPadding")
-        listPad.PaddingTop = UDim.new(0, 8)
-        listPad.PaddingBottom = UDim.new(0, 8)
-        listPad.PaddingLeft = UDim.new(0, 8)
-        listPad.PaddingRight = UDim.new(0, 8)
-        listPad.Parent = listScroll
-
-        -- Render Bar Item yang Sedang Dipakai (1x Tap langsung copot)
         local function refreshWornChips()
             for _, ch in ipairs(wornScroll:GetChildren()) do
                 if ch:IsA("GuiObject") then ch:Destroy() end
@@ -1617,95 +1370,42 @@ local function scMountEmbeddedBrowser()
             local W = SC.Worn or scFindWorn()
             if not W or not SC.DB then
                 statusDot.BackgroundColor3 = Color3.fromRGB(240, 170, 60)
-                local emptyPill = Instance.new("Frame")
-                emptyPill.Size = UDim2.new(0, 310, 0, 42)
-                emptyPill.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
-                emptyPill.BorderSizePixel = 0
-                emptyPill.Parent = wornScroll
-
-                local epc = Instance.new("UICorner")
-                epc.CornerRadius = UDim.new(0, 6)
-                epc.Parent = emptyPill
-
-                local emptyLbl = Instance.new("TextLabel")
-                emptyLbl.Size = UDim2.new(1, -16, 1, 0)
-                emptyLbl.Position = UDim2.new(0, 8, 0, 0)
-                emptyLbl.BackgroundTransparency = 1
-                emptyLbl.TextSize = 11
-                emptyLbl.TextColor3 = Color3.fromRGB(145, 150, 165)
-                emptyLbl.TextXAlignment = Enum.TextXAlignment.Left
-                emptyLbl.Text = "Masuk ke dalam World terlebih dahulu untuk memuat pakaian."
-                lockFont(emptyLbl, CLEAN_FONT_REG)
-                emptyLbl.Parent = emptyPill
+                wornTitle.Text = "SEDANG DIPAKAI"
+                infoPill("Masuk ke dalam World terlebih dahulu untuk memuat pakaian.", 310)
                 return
             end
 
-            local wornEntries = {}
+            local entries = {}
             for slot, id in pairs(W) do
-                local itemObj = SC.ItemMap[id]
                 local dbIt = SC.DB[id]
-                if itemObj or dbIt then
-                    wornEntries[#wornEntries + 1] = {
-                        slot = slot,
-                        id = id,
-                        name = (itemObj and itemObj.name) or (dbIt and dbIt.name) or ("Item #" .. tostring(id)),
-                        item = itemObj or { id = id, name = dbIt.name, slot = slot, raw = dbIt }
-                    }
+                if dbIt then
+                    entries[#entries + 1] = { slot = slot, id = id, name = dbIt.name or ("Item #" .. tostring(id)) }
                 end
             end
+            table.sort(entries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
 
-            table.sort(wornEntries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
-
-            if #wornEntries == 0 then
+            if #entries == 0 then
                 statusDot.BackgroundColor3 = Color3.fromRGB(120, 125, 140)
                 wornTitle.Text = "SEDANG DIPAKAI (0)  •  BELUM ADA ITEM AKTIF"
-
-                local nonePill = Instance.new("Frame")
-                nonePill.Size = UDim2.new(0, 290, 0, 42)
-                nonePill.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
-                nonePill.BorderSizePixel = 0
-                nonePill.Parent = wornScroll
-
-                local npc = Instance.new("UICorner")
-                npc.CornerRadius = UDim.new(0, 6)
-                npc.Parent = nonePill
-
-                local noneLbl = Instance.new("TextLabel")
-                noneLbl.Size = UDim2.new(1, -16, 1, 0)
-                noneLbl.Position = UDim2.new(0, 10, 0, 0)
-                noneLbl.BackgroundTransparency = 1
-                noneLbl.TextSize = 11
-                noneLbl.TextColor3 = Color3.fromRGB(140, 145, 160)
-                noneLbl.TextXAlignment = Enum.TextXAlignment.Left
-                noneLbl.Text = "Tidak ada pakaian dipakai — Tap 2x item di bawah"
-                lockFont(noneLbl, CLEAN_FONT_REG)
-                noneLbl.Parent = nonePill
+                infoPill("Tidak ada pakaian dipakai. Tap item di katalog di bawah.", 300)
                 return
             end
 
             statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
-            wornTitle.Text = string.format("SEDANG DIPAKAI (%d ITEM)  •  TAP 1x UNTUK COPOT", #wornEntries)
+            wornTitle.Text = string.format("SEDANG DIPAKAI (%d)  •  TAP 1x = LEPAS / KEMBALI KE AWAL", #entries)
 
-            for _, entry in ipairs(wornEntries) do
-                local isVis = SC.Ov[entry.slot] ~= nil
+            for _, e in ipairs(entries) do
+                local isVis = SC.Ov[e.slot] ~= nil
 
                 local chip = Instance.new("TextButton")
-                chip.Name = "WornCard_" .. tostring(entry.slot)
+                chip.Name = "WornCard_" .. tostring(e.slot)
                 chip.Size = UDim2.new(0, 175, 0, 46)
                 chip.BackgroundColor3 = isVis and Color3.fromRGB(24, 34, 48) or Color3.fromRGB(28, 30, 38)
                 chip.AutoButtonColor = false
                 chip.Text = ""
                 chip.Parent = wornScroll
-
-                local cc = Instance.new("UICorner")
-                cc.CornerRadius = UDim.new(0, 7)
-                cc.Parent = chip
-
-                local cs = Instance.new("UIStroke")
-                cs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                cs.Color = isVis and Color3.fromRGB(65, 135, 220) or Color3.fromRGB(52, 56, 68)
-                cs.Thickness = 1
-                cs.Parent = chip
+                uiCorner(chip, 7)
+                local cs = uiStroke(chip, isVis and Color3.fromRGB(65, 135, 220) or Color3.fromRGB(52, 56, 68), 1)
 
                 local iconHolder = Instance.new("Frame")
                 iconHolder.Size = UDim2.new(0, 34, 0, 34)
@@ -1713,247 +1413,173 @@ local function scMountEmbeddedBrowser()
                 iconHolder.BackgroundColor3 = Color3.fromRGB(16, 18, 22)
                 iconHolder.BorderSizePixel = 0
                 iconHolder.Parent = chip
+                uiCorner(iconHolder, 5)
+                scSetIcon(scMakeIcon(iconHolder, 3), e.id)
 
-                local ic = Instance.new("UICorner")
-                ic.CornerRadius = UDim.new(0, 5)
-                ic.Parent = iconHolder
-
-                scRenderItemIconInto(iconHolder, entry.item)
-
-                local nameLbl = Instance.new("TextLabel")
+                local nameLbl = uiLabel(chip, e.name, 11, Color3.fromRGB(240, 242, 248), UIFONT.bold)
                 nameLbl.Size = UDim2.new(1, -68, 0, 18)
                 nameLbl.Position = UDim2.new(0, 46, 0, 6)
-                nameLbl.BackgroundTransparency = 1
-                nameLbl.TextSize = 11
-                nameLbl.TextColor3 = Color3.fromRGB(240, 242, 248)
-                nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-                nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                nameLbl.Text = entry.name
-                lockFont(nameLbl, CLEAN_FONT_BOLD)
-                nameLbl.Parent = chip
 
-                local slotLbl = Instance.new("TextLabel")
+                local slotLbl = uiLabel(chip, string.format("[%s] #%d", tostring(e.slot):upper(), e.id), 10,
+                    isVis and Color3.fromRGB(115, 180, 255) or Color3.fromRGB(150, 155, 170), UIFONT.reg)
                 slotLbl.Size = UDim2.new(1, -68, 0, 15)
                 slotLbl.Position = UDim2.new(0, 46, 0, 24)
-                slotLbl.BackgroundTransparency = 1
-                slotLbl.TextSize = 10
-                slotLbl.TextColor3 = isVis and Color3.fromRGB(115, 180, 255) or Color3.fromRGB(150, 155, 170)
-                slotLbl.TextXAlignment = Enum.TextXAlignment.Left
-                slotLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                slotLbl.Text = string.format("[%s] #%d", tostring(entry.slot):upper(), entry.id)
-                lockFont(slotLbl, CLEAN_FONT_REG)
-                slotLbl.Parent = chip
 
-                local closeBadge = Instance.new("TextLabel")
+                local closeBadge = uiLabel(chip, "×", 11, Color3.fromRGB(255, 110, 120), UIFONT.bold, Enum.TextXAlignment.Center)
                 closeBadge.Size = UDim2.new(0, 18, 0, 18)
                 closeBadge.Position = UDim2.new(1, -23, 0.5, -9)
+                closeBadge.BackgroundTransparency = 0
                 closeBadge.BackgroundColor3 = Color3.fromRGB(48, 30, 34)
-                closeBadge.TextSize = 11
-                closeBadge.TextColor3 = Color3.fromRGB(255, 110, 120)
-                closeBadge.Text = "×"
-                lockFont(closeBadge, CLEAN_FONT_BOLD)
-                closeBadge.Parent = chip
+                uiCorner(closeBadge, 4)
 
-                local cbc = Instance.new("UICorner")
-                cbc.CornerRadius = UDim.new(0, 4)
-                cbc.Parent = closeBadge
-
-                chip.MouseEnter:Connect(function()
-                    cs.Color = Color3.fromRGB(235, 80, 90)
-                    closeBadge.BackgroundColor3 = Color3.fromRGB(210, 50, 60)
-                    closeBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
-                end)
+                chip.MouseEnter:Connect(function() cs.Color = Color3.fromRGB(235, 80, 90) end)
                 chip.MouseLeave:Connect(function()
                     cs.Color = isVis and Color3.fromRGB(65, 135, 220) or Color3.fromRGB(52, 56, 68)
-                    closeBadge.BackgroundColor3 = Color3.fromRGB(48, 30, 34)
-                    closeBadge.TextColor3 = Color3.fromRGB(255, 110, 120)
                 end)
 
-                -- 1x TAP LANGSUNG COPOT ITEM
-                chip.MouseButton1Click:Connect(function()
-                    scUnwearSlot(entry.slot)
+                -- 1x tap: langsung hilang dari bar & kembali ke set awal untuk slot ini
+                chip.Activated:Connect(function()
+                    scRemoveSlot(e.slot)
                 end)
             end
         end
 
-        local function rebuildListCards()
-            scBuildItems()
-            refreshWornChips()
+        -- ---------------- KATALOG (VIRTUAL LIST) ----------------
+        local function makeClothRow(scroll)
+            local row = {}
+            local card = Instance.new("TextButton")
+            card.Name = "ItemRow"
+            card.BorderSizePixel = 0
+            card.AutoButtonColor = false
+            card.Text = ""
+            card.Parent = scroll
+            uiCorner(card, 7)
+            row.frame = card
+            row.card = card
+            row.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
 
-            for _, ch in ipairs(listScroll:GetChildren()) do
-                if ch:IsA("GuiObject") then ch:Destroy() end
+            local iconBg = Instance.new("Frame")
+            iconBg.Size = UDim2.new(0, 42, 0, 42)
+            iconBg.Position = UDim2.new(0, 7, 0.5, -21)
+            iconBg.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
+            iconBg.BorderSizePixel = 0
+            iconBg.Parent = card
+            uiCorner(iconBg, 6)
+            uiStroke(iconBg, Color3.fromRGB(34, 36, 45), 1)
+            row.icon = scMakeIcon(iconBg, 3)
+
+            row.title = uiLabel(card, "", 12, Color3.fromRGB(242, 244, 250), UIFONT.bold)
+            row.title.Size = UDim2.new(1, -150, 0, 20)
+            row.title.Position = UDim2.new(0, 58, 0, 8)
+
+            row.sub = uiLabel(card, "", 10, Color3.fromRGB(145, 152, 168), UIFONT.reg)
+            row.sub.Size = UDim2.new(1, -150, 0, 18)
+            row.sub.Position = UDim2.new(0, 58, 0, 29)
+
+            local badge = uiLabel(card, "", 10, Color3.fromRGB(185, 190, 205), UIFONT.bold, Enum.TextXAlignment.Center)
+            badge.Size = UDim2.new(0, 76, 0, 24)
+            badge.Position = UDim2.new(1, -84, 0.5, -12)
+            badge.BackgroundTransparency = 0
+            uiCorner(badge, 5)
+            row.badge = badge
+
+            card.Activated:Connect(function()
+                if row.item then scTapItem(row.item.id) end
+            end)
+            return row
+        end
+
+        local function bindClothRow(row, item)
+            local W = SC.Worn or {}
+            local eq = (W[item.slot] == item.id)
+            local ov = SC.Ov[item.slot] ~= nil and eq
+            row.card.BackgroundColor3 = eq and Color3.fromRGB(20, 42, 32) or Color3.fromRGB(20, 22, 28)
+            row.stroke.Color = eq and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
+            if row.iconId ~= item.id then
+                row.iconId = item.id
+                scSetIcon(row.icon, item.id)
             end
+            row.title.Text = string.format("%s   #%d", item.name, item.id)
+            row.sub.Text = string.format("%s  •  rbxassetid://%s%s", item.slot:upper(), item.assetNum,
+                item.doubleJump and "  •  2x JUMP" or "")
+            row.badge.Text = eq and (ov and "VISUAL ✓" or "DIPAKAI") or "PAKAI"
+            row.badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
+            row.badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
+        end
 
-            if not SC.Items or #SC.Items == 0 then
+        vlist = newVList(holder, {
+            name = "ClothesListScroll",
+            rowH = 56,
+            gap = 6,
+            pad = 8,
+            size = UDim2.new(1, -20, 1, -146),
+            position = UDim2.new(0, 10, 0, 136),
+            makeRow = makeClothRow,
+            bind = bindClothRow,
+        })
+
+        local function applyFilter(toTop)
+            if not scBuildItems() then
                 countLabel.Text = "ItemDB kosong / belum ter-load."
                 return
             end
-
-            local q = vnTrim(SC.SearchQuery):lower()
+            local words = {}
+            for w in string.gmatch(vnTrim(SC.SearchQuery):lower(), "%S+") do words[#words + 1] = w end
             local slotFilter = (SC.SelectedSlot or "All"):lower()
-            local W = SC.Worn or {}
 
-            local matched = {}
+            local out = {}
             for _, item in ipairs(SC.Items) do
-                local slotOk = (slotFilter == "all") or (item.slot == slotFilter)
-                local searchOk = (q == "")
-                    or item.lname:find(q, 1, true)
-                    or tostring(item.id):find(q, 1, true)
-                    or item.slot:find(q, 1, true)
-                    or tostring(item.assetNum):lower():find(q, 1, true)
-                if slotOk and searchOk then
-                    matched[#matched + 1] = item
+                if slotFilter == "all" or item.slot == slotFilter then
+                    local ok = true
+                    if #words > 0 then
+                        local hay = item.hay
+                        if not hay then
+                            hay = item.lname .. " " .. item.slot .. " " .. tostring(item.id) .. " " .. tostring(item.assetNum)
+                            item.hay = hay
+                        end
+                        for _, w in ipairs(words) do
+                            if not hay:find(w, 1, true) then ok = false; break end
+                        end
+                    end
+                    if ok then out[#out + 1] = item end
                 end
             end
-
-            local maxShow = math.min(#matched, 250)
-            countLabel.Text = string.format(
-                "Menampilkan %d dari %d Pakaian (Filter: %s)  •  Tap 2x Kartu untuk Pakai / Lepas",
-                maxShow, #matched, (SC.SelectedSlot or "All"):upper()
-            )
-
-            for i = 1, maxShow do
-                local item = matched[i]
-                local isEquipped = (W[item.slot] == item.id)
-
-                local card = Instance.new("TextButton")
-                card.Name = "ItemCard_" .. tostring(item.id)
-                card.LayoutOrder = i
-                card.Size = UDim2.new(1, 0, 0, 56)
-                card.BackgroundColor3 = isEquipped and Color3.fromRGB(20, 42, 32) or Color3.fromRGB(20, 22, 28)
-                card.BorderSizePixel = 0
-                card.AutoButtonColor = false
-                card.Text = ""
-                card.Parent = listScroll
-
-                local cCorner = Instance.new("UICorner")
-                cCorner.CornerRadius = UDim.new(0, 7)
-                cCorner.Parent = card
-
-                local cStroke = Instance.new("UIStroke")
-                cStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                cStroke.Color = isEquipped and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
-                cStroke.Thickness = 1
-                cStroke.Parent = card
-
-                -- Kotak Ikon & Render Texture Asli (`ItemIcon` / `ClothesDB` / `Assets`)
-                local iconBg = Instance.new("Frame")
-                iconBg.Size = UDim2.new(0, 42, 0, 42)
-                iconBg.Position = UDim2.new(0, 7, 0.5, -21)
-                iconBg.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
-                iconBg.BorderSizePixel = 0
-                iconBg.Parent = card
-
-                local iCorner = Instance.new("UICorner")
-                iCorner.CornerRadius = UDim.new(0, 6)
-                iCorner.Parent = iconBg
-
-                local iStroke = Instance.new("UIStroke")
-                iStroke.Color = Color3.fromRGB(34, 36, 45)
-                iStroke.Thickness = 1
-                iStroke.Parent = iconBg
-
-                local resolvedAsset = scRenderItemIconInto(iconBg, item)
-
-                -- Nama Item + ID
-                local titleLbl = Instance.new("TextLabel")
-                titleLbl.Size = UDim2.new(1, -155, 0, 20)
-                titleLbl.Position = UDim2.new(0, 58, 0, 8)
-                titleLbl.BackgroundTransparency = 1
-                titleLbl.TextSize = 12
-                titleLbl.TextColor3 = Color3.fromRGB(242, 244, 250)
-                titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-                titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                titleLbl.Text = string.format("%s   #%d", item.name, item.id)
-                lockFont(titleLbl, CLEAN_FONT_BOLD)
-                titleLbl.Parent = card
-
-                -- Sub-info: Slot & Roblox Asset ID Texture
-                local subLbl = Instance.new("TextLabel")
-                subLbl.Size = UDim2.new(1, -155, 0, 18)
-                subLbl.Position = UDim2.new(0, 58, 0, 29)
-                subLbl.BackgroundTransparency = 1
-                subLbl.TextSize = 10
-                subLbl.TextColor3 = Color3.fromRGB(145, 152, 168)
-                subLbl.TextXAlignment = Enum.TextXAlignment.Left
-                subLbl.TextTruncate = Enum.TextTruncate.AtEnd
-                subLbl.Text = string.format(
-                    "SLOT: %s   •   ASSET: %s%s",
-                    item.slot:upper(),
-                    tostring(resolvedAsset),
-                    item.doubleJump and "   •   2x JUMP" or ""
-                )
-                lockFont(subLbl, CLEAN_FONT_REG)
-                subLbl.Parent = card
-
-                -- Pill Badge Status di Kanan Kartu
-                local badge = Instance.new("TextLabel")
-                badge.Size = UDim2.new(0, 82, 0, 24)
-                badge.Position = UDim2.new(1, -90, 0.5, -12)
-                badge.BackgroundColor3 = isEquipped and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
-                badge.TextSize = 10
-                badge.TextColor3 = isEquipped and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
-                badge.Text = isEquipped and "DIPAKAI" or "2x TAP WEAR"
-                lockFont(badge, CLEAN_FONT_BOLD)
-                badge.Parent = card
-
-                local bCorner = Instance.new("UICorner")
-                bCorner.CornerRadius = UDim.new(0, 5)
-                bCorner.Parent = badge
-
-                card.MouseEnter:Connect(function()
-                    if not isEquipped then
-                        card.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
-                        cStroke.Color = Color3.fromRGB(65, 72, 90)
-                    end
-                end)
-                card.MouseLeave:Connect(function()
-                    if not isEquipped then
-                        card.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-                        cStroke.Color = Color3.fromRGB(38, 42, 52)
-                    end
-                end)
-
-                card.MouseButton1Click:Connect(function()
-                    local now = os.clock()
-                    if SC.LastTapId == item.id and (now - SC.LastTapTime) <= 0.45 then
-                        SC.LastTapId = nil
-                        SC.LastTapTime = 0
-                        scToggleSingleItem(item.id)
-                    else
-                        SC.LastTapId = item.id
-                        SC.LastTapTime = now
-                        badge.Text = "TAP LAGI!"
-                        badge.BackgroundColor3 = Color3.fromRGB(55, 115, 210)
-                        badge.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        task.delay(0.46, function()
-                            if badge and badge.Parent and SC.LastTapId == item.id then
-                                local curW = SC.Worn or {}
-                                local eq = (curW[item.slot] == item.id)
-                                badge.Text = eq and "DIPAKAI" or "2x TAP WEAR"
-                                badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
-                                badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
-                            end
-                        end)
-                    end
-                end)
-            end
+            matched = out
+            countLabel.Text = string.format("%d pakaian  •  Filter: %s  •  Tap 1x = pakai / kembali ke awal",
+                #out, (SC.SelectedSlot or "All"):upper())
+            vlist:SetData(out, toTop)
         end
 
-        SC.RefreshWornBarFn = refreshWornChips
-        SC.UpdateUIFn = rebuildListCards
-        rebuildListCards()
+        local function refreshAll()
+            refreshWornChips()
+            vlist:Refresh()
+        end
+
+        -- pencarian dengan debounce supaya mengetik tidak membuat lag
+        local filterToken = 0
+        SC.FilterFn = function()
+            filterToken += 1
+            local my = filterToken
+            task.delay(0.12, function()
+                if my == filterToken then pcall(applyFilter, true) end
+            end)
+        end
+
+        SC.RefreshWornBarFn = refreshAll
+        SC.UpdateUIFn = refreshAll
+
+        refreshWornChips()
+        applyFilter(true)
     end)
 end
 
+
 -- =========================================================================
--- LOGIKA MOD DETECTOR + ANTI-SPAM NOTIF + AUTO ACTION (EXIT/DIEM) + ESP
+-- LOGIKA CHECK MODERATOR + ANTI-SPAM NOTIF + AUTO ACTION (EXIT/DIEM)
 -- =========================================================================
 local ModSys = {
     RolesModule = nil,
     ActiveMods = {},
-    ESPObjects = {},
-    OverlayGui = nil,
     StatusLabel = nil,
     FrozenPos = nil,
 }
@@ -2113,145 +1739,765 @@ local function setFreezeState(freezeOn)
     end
 end
 
-local function ensureModOverlay()
-    if ModSys.OverlayGui and ModSys.OverlayGui.Parent then return ModSys.OverlayGui end
-    local parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui")
+-- =========================================================================
+-- ESP & CHECK: DAFTAR PLAYER, ESP VISUAL (100% CLIENT), JALAN OTOMATIS
+--  * Posisi diambil dari modul "Others" milik game (koordinat tile), jadi
+--    ESP bekerja untuk game 2D ini, bukan lewat Character 3D Roblox.
+--  * ESP hanya menggambar di layarmu (overlay GUI), tidak mengirim apa pun.
+--  * GO = jalan kaki otomatis lewat input game (bukan teleport).
+-- =========================================================================
+local ESP = {
+    Targets = {},     -- [userId] = true  (ESP per player dari tombol di list)
+    Objs = {},        -- [userId] = { line, box, lbl }
+    Overlay = nil,
+    Others = nil,     -- instance modul Others milik game
+    Entries = nil,    -- tabel internal pemain milik Others (id -> data)
+    Layer = nil,      -- frame "Tiles" (layer dunia)
+    Probe = nil,      -- frame 100px untuk membaca skala UI
+    LastScan = 0,
+    Filter = "Semua",
+    Search = "",
+    ListRefresh = nil,
+    SoftRefresh = nil,
+}
+
+local ESP_FILTERS = { "Semua", "Staff / Mod", "Hidden", "Terlihat" }
+
+local function espPX()
+    local ts = SC.Assets and SC.Assets.TileSize
+    if type(ts) ~= "number" then
+        local ok, A = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("Shared", 5):WaitForChild("Assets", 5))
+        end)
+        ts = (ok and type(A) == "table" and type(A.TileSize) == "number") and A.TileSize or 32
+        if ok and type(A) == "table" and not SC.Assets then SC.Assets = A end
+    end
+    return ts * 2
+end
+
+local function espFindOthers()
+    if ESP.Others then return ESP.Others end
+    if type(getgc) ~= "function" then return nil end
+    if os.clock() - ESP.LastScan < 3 then return nil end
+    ESP.LastScan = os.clock()
+    local ok, gc = pcall(getgc, true)
+    if not ok or type(gc) ~= "table" then return nil end
+    for _, obj in ipairs(gc) do
+        if type(obj) == "table" then
+            if type(rawget(obj, "where")) == "function"
+                and type(rawget(obj, "list")) == "function"
+                and type(rawget(obj, "tagOf")) == "function"
+                and type(rawget(obj, "playerAt")) == "function" then
+                ESP.Others = obj
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+-- Tabel internal pemain milik Others (upvalue fungsi `where`)
+local function espEntries()
+    if ESP.Entries then return ESP.Entries end
+    local O = espFindOthers()
+    if not O then return nil end
+    if type(debug) == "table" and type(debug.getupvalues) == "function" then
+        local ok, ups = pcall(debug.getupvalues, O.where)
+        if ok and type(ups) == "table" then
+            for _, v in pairs(ups) do
+                if type(v) == "table" then
+                    ESP.Entries = v
+                    return v
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function espEntryOf(userId)
+    local E = espEntries()
+    if E then
+        for _, e in pairs(E) do
+            if type(e) == "table" and e.userId == userId then return e end
+        end
+    end
+    return nil
+end
+
+-- Posisi (tile) milik kita sendiri: upvalue 1 & 2 dari G.goTo adalah x,y pemain
+local function espMyPos()
+    local G = SC.State
+    if not G then pcall(scFindWorn); G = SC.State end
+    if G and type(G.goTo) == "function" and type(debug) == "table" and type(debug.getupvalues) == "function" then
+        local ok, ups = pcall(debug.getupvalues, G.goTo)
+        if ok and type(ups) == "table" then
+            local x, y = ups[1], ups[2]
+            if type(x) == "number" and type(y) == "number" then return x, y end
+        end
+    end
+    return nil, nil
+end
+
+-- Konversi koordinat tile -> posisi layar (dalam ruang ScreenGui overlay)
+local function espLayer()
+    if ESP.Layer and ESP.Layer.Parent then return ESP.Layer end
+    local E = espEntries()
+    if E then
+        for _, e in pairs(E) do
+            local g = type(e) == "table" and e.group
+            if typeof(g) == "Instance" and g.Parent then
+                local layer = g.Parent:FindFirstChild("Tiles")
+                if layer then
+                    ESP.Layer = layer
+                    if ESP.Probe then pcall(function() ESP.Probe:Destroy() end) end
+                    local probe = Instance.new("Frame")
+                    probe.Name = "R8DV_ScaleProbe"
+                    probe.BackgroundTransparency = 1
+                    probe.BorderSizePixel = 0
+                    probe.Size = UDim2.fromOffset(100, 100)
+                    probe.Parent = layer.Parent
+                    ESP.Probe = probe
+                    return layer
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function espToScreen(x, y)
+    local layer = espLayer()
+    if not layer then return nil end
+    local s = 1
+    if ESP.Probe and ESP.Probe.Parent then
+        s = ESP.Probe.AbsoluteSize.X / 100
+        if s <= 0 then s = 1 end
+    end
+    local ap = layer.AbsolutePosition
+    local px = espPX() * s
+    return Vector2.new(ap.X + x * px, ap.Y + y * px)
+end
+
+-- ---------------------------------------------------------------------
+-- DATA PLAYER (dipakai list & ESP)
+-- ---------------------------------------------------------------------
+local function espStatusOf(plr, entry)
+    local attrHidden = (plr:GetAttribute("Invisible") == true) or (plr:GetAttribute("Ghost") == true)
+        or (plr:GetAttribute("Hidden") == true)
+    if not entry then
+        return attrHidden and "HIDDEN" or "TAK DI WORLD", false, attrHidden
+    end
+    if not entry.seen then
+        return "HIDDEN", false, true
+    end
+    if attrHidden then
+        return "HIDDEN", true, true
+    end
+    return "TERLIHAT", true, false
+end
+
+local function espCollect()
+    local rows = {}
+    local mx, my = espMyPos()
+    local q = vnTrim(ESP.Search):lower()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local entry = espEntryOf(plr.UserId)
+            local status, hasPos, hidden = espStatusOf(plr, entry)
+            local modInfo = ModSys.ActiveMods[plr]
+            local role = modInfo and tostring(modInfo.role) or nil
+            local nick = tostring(plr:GetAttribute("Nick") or "")
+            local show = tostring(plr.DisplayName ~= "" and plr.DisplayName or plr.Name)
+            local dist
+            if hasPos and entry and mx then
+                dist = math.sqrt((entry.x - mx) ^ 2 + (entry.y - my) ^ 2)
+            end
+            local ok = true
+            if ESP.Filter == "Staff / Mod" then ok = modInfo ~= nil
+            elseif ESP.Filter == "Hidden" then ok = hidden or status == "HIDDEN"
+            elseif ESP.Filter == "Terlihat" then ok = (status == "TERLIHAT") end
+            if ok and q ~= "" then
+                local hay = (plr.Name .. " " .. show .. " " .. nick .. " " .. tostring(plr.UserId)):lower()
+                ok = hay:find(q, 1, true) ~= nil
+            end
+            if ok then
+                rows[#rows + 1] = {
+                    plr = plr,
+                    userId = plr.UserId,
+                    name = plr.Name,
+                    display = show,
+                    role = role,
+                    isMod = modInfo ~= nil,
+                    status = status,
+                    hasPos = hasPos,
+                    hidden = hidden,
+                    dist = dist,
+                }
+            end
+        end
+    end
+    table.sort(rows, function(a, b)
+        if a.isMod ~= b.isMod then return a.isMod end
+        local ra = a.hasPos and 0 or 1
+        local rb = b.hasPos and 0 or 1
+        if ra ~= rb then return ra < rb end
+        return a.name:lower() < b.name:lower()
+    end)
+    return rows
+end
+
+-- ---------------------------------------------------------------------
+-- OVERLAY ESP
+-- ---------------------------------------------------------------------
+local function espEnsureOverlay()
+    if ESP.Overlay and ESP.Overlay.Parent then return ESP.Overlay end
+    local parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+        or LocalPlayer:WaitForChild("PlayerGui")
     local sg = Instance.new("ScreenGui")
-    sg.Name = "R8DV_ModESP_Overlay"
-    sg.IgnoreGuiInset = true
+    sg.Name = "R8DV_ESP_Overlay"
     sg.ResetOnSpawn = false
+    sg.DisplayOrder = 9999
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    local layer = ESP.Layer
+    local host = layer and layer:FindFirstAncestorOfClass("ScreenGui")
+    sg.IgnoreGuiInset = host and host.IgnoreGuiInset or true
     sg.Parent = parent
-    ModSys.OverlayGui = sg
+    ESP.Overlay = sg
     return sg
 end
 
-local function removeModESP(plr)
-    local esp = ModSys.ESPObjects[plr]
-    if esp then
-        for _, v in pairs(esp) do
-            pcall(function() if v and v.Destroy then v:Destroy() end end)
+local function espDestroyObj(uid)
+    local o = ESP.Objs[uid]
+    if o then
+        for _, v in pairs(o) do
+            pcall(function() v:Destroy() end)
         end
-        ModSys.ESPObjects[plr] = nil
+        ESP.Objs[uid] = nil
     end
 end
 
-local function updateModESP()
-    local espEnabled = getValue("Mod_ESP", true)
-    if not espEnabled then
-        for plr in pairs(ModSys.ESPObjects) do removeModESP(plr) end
+local function espClearAll()
+    for uid in pairs(ESP.Objs) do espDestroyObj(uid) end
+end
+
+local function espForget(plr)
+    if plr then
+        ESP.Targets[plr.UserId] = nil
+        espDestroyObj(plr.UserId)
+    end
+end
+
+local function espMakeObj(sg, uid)
+    local line = Instance.new("Frame")
+    line.Name = "Tracer_" .. uid
+    line.BorderSizePixel = 0
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
+    line.Visible = false
+    line.Parent = sg
+
+    local box = Instance.new("Frame")
+    box.Name = "Box_" .. uid
+    box.AnchorPoint = Vector2.new(0.5, 1)
+    box.BackgroundTransparency = 0.85
+    box.BorderSizePixel = 0
+    box.Visible = false
+    box.Parent = sg
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Parent = box
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "Label_" .. uid
+    lbl.AnchorPoint = Vector2.new(0.5, 1)
+    lbl.Size = UDim2.fromOffset(190, 32)
+    lbl.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+    lbl.BackgroundTransparency = 0.25
+    lbl.BorderSizePixel = 0
+    lbl.TextSize = 11
+    lbl.TextWrapped = true
+    lbl.Visible = false
+    lbl.Parent = sg
+    lbl:SetAttribute("R8DV_SkipLight", true)
+    lbl.FontFace = UIFONT.bold
+    uiCorner(lbl, 4)
+
+    local o = { line = line, box = box, stroke = stroke, lbl = lbl }
+    ESP.Objs[uid] = o
+    return o
+end
+
+local function espWantedTargets()
+    -- siapa saja yang digambar: target manual, semua player, dan staff otomatis
+    local want = {}
+    local all = getValue("ESP_All", false)
+    local autoMod = getValue("Mod_ESP", true) and getValue("Mod_Enable", true)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if all or ESP.Targets[plr.UserId] or (autoMod and ModSys.ActiveMods[plr]) then
+                want[plr.UserId] = plr
+            end
+        end
+    end
+    return want
+end
+
+local function espRender()
+    if not getValue("ESP_Master", true) then
+        if next(ESP.Objs) ~= nil then espClearAll() end
         return
     end
 
-    local sg = ensureModOverlay()
-    Camera = Workspace.CurrentCamera
-    if not Camera then return end
-
-    local myPos2D = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y * 0.85)
-    if LocalPlayer.Character then
-        local myRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character.PrimaryPart
-        if myRoot then
-            local vp, onScr = Camera:WorldToViewportPoint(myRoot.Position)
-            if onScr then myPos2D = Vector2.new(vp.X, vp.Y) end
-        end
+    local want = espWantedTargets()
+    for uid in pairs(ESP.Objs) do
+        if not want[uid] then espDestroyObj(uid) end
     end
+    if next(want) == nil then return end
 
-    for plr, info in pairs(ModSys.ActiveMods) do
-        if not plr or not plr.Parent then
-            removeModESP(plr)
-            ModSys.ActiveMods[plr] = nil
-        else
-            local esp = ModSys.ESPObjects[plr]
-            if not esp then
-                local line = Instance.new("Frame")
-                line.Name = "Tracer_" .. plr.Name
-                line.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
-                line.BorderSizePixel = 0
-                line.AnchorPoint = Vector2.new(0.5, 0.5)
-                line.Visible = false
-                line.Parent = sg
+    espLayer()
+    local sg = espEnsureOverlay()
+    local hostGui = ESP.Layer and ESP.Layer:FindFirstAncestorOfClass("ScreenGui")
+    if hostGui and sg.IgnoreGuiInset ~= hostGui.IgnoreGuiInset then
+        sg.IgnoreGuiInset = hostGui.IgnoreGuiInset
+    end
+    Camera = Workspace.CurrentCamera
+    local vs = sg.AbsoluteSize
+    if vs.X <= 0 then vs = (Camera and Camera.ViewportSize) or Vector2.new(800, 600) end
+    local showHidden = getValue("ESP_Hidden", true)
 
-                local box = Instance.new("Frame")
-                box.Name = "Box_" .. plr.Name
-                box.Size = UDim2.new(0, 64, 0, 64)
-                box.AnchorPoint = Vector2.new(0.5, 0.5)
-                box.BackgroundTransparency = 0.75
-                box.BackgroundColor3 = Color3.fromRGB(255, 30, 30)
-                box.BorderSizePixel = 0
-                box.Visible = false
-                box.Parent = sg
+    local mx, my = espMyPos()
+    local me2D = (mx and espToScreen(mx, my - 0.5)) or Vector2.new(vs.X / 2, vs.Y * 0.8)
 
-                local stroke = Instance.new("UIStroke")
-                stroke.Color = Color3.fromRGB(255, 60, 60)
-                stroke.Thickness = 2
-                stroke.Parent = box
+    for uid, plr in pairs(want) do
+        local o = ESP.Objs[uid] or espMakeObj(sg, uid)
+        local entry = espEntryOf(uid)
+        local status, hasPos, hidden = espStatusOf(plr, entry)
+        local modInfo = ModSys.ActiveMods[plr]
 
-                local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(0, 220, 0, 36)
-                lbl.Position = UDim2.new(0.5, -110, 0, -40)
-                lbl.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-                lbl.BackgroundTransparency = 0.2
-                lbl.Font = Enum.Font.GothamMedium
-                lbl.TextSize = 12
-                lbl.TextColor3 = Color3.fromRGB(255, 90, 90)
-                lbl.TextStrokeTransparency = 0.4
-                lbl.Parent = box
+        local color
+        if modInfo then color = Color3.fromRGB(255, 70, 70)
+        elseif hidden then color = Color3.fromRGB(190, 120, 255)
+        else color = Color3.fromRGB(80, 220, 255) end
 
-                local lc = Instance.new("UICorner")
-                lc.CornerRadius = UDim.new(0, 4)
-                lc.Parent = lbl
+        local pos2D
+        if hasPos and entry and (showHidden or not hidden) then
+            pos2D = espToScreen(entry.x, entry.y - 0.5)
+        end
 
-                esp = { line = line, box = box, lbl = lbl }
-                ModSys.ESPObjects[plr] = esp
-            end
-
-            local worldPos, isHidden = getModWorldPosition(plr)
-            if worldPos then
-                local vp = Camera:WorldToViewportPoint(worldPos)
-                local dist = 0
-                if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
-                    dist = (LocalPlayer.Character.PrimaryPart.Position - worldPos).Magnitude
-                end
-
-                local target2D = Vector2.new(
-                    math.clamp(vp.X, 40, Camera.ViewportSize.X - 40),
-                    math.clamp(vp.Y, 40, Camera.ViewportSize.Y - 40)
-                )
-                if vp.Z < 0 then
-                    target2D = Vector2.new(Camera.ViewportSize.X - target2D.X, Camera.ViewportSize.Y - 40)
-                end
-
-                local delta = target2D - myPos2D
-                local len = delta.Magnitude
-                local centerPt = (myPos2D + target2D) / 2
-                local angle = math.deg(math.atan2(delta.Y, delta.X))
-
-                esp.line.Position = UDim2.new(0, centerPt.X, 0, centerPt.Y)
-                esp.line.Size = UDim2.new(0, len, 0, 2)
-                esp.line.Rotation = angle
-                esp.line.Visible = true
-
-                esp.box.Position = UDim2.new(0, target2D.X, 0, target2D.Y)
-                esp.box.Visible = true
-                esp.lbl.Text = string.format(
-                    "[MOD] %s (%s)\nStatus: %s | %.0f studs",
-                    plr.Name, tostring(info.role), isHidden and "HIDDEN/INVIS" or "VISIBLE", dist
-                )
+        if not pos2D then
+            o.line.Visible = false
+            o.box.Visible = false
+            if modInfo or ESP.Targets[uid] then
+                -- tetap beri info di atas layar kalau tak ada posisi (mis. hidden penuh)
+                o.lbl.Visible = true
+                o.lbl.TextColor3 = color
+                o.lbl.Position = UDim2.fromOffset(vs.X / 2, 70 + (uid % 5) * 36)
+                o.lbl.Text = string.format("%s%s\n%s (posisi tidak dikirim server)",
+                    modInfo and "[MOD] " or "", plr.Name, status)
             else
-                local topPos = Vector2.new(Camera.ViewportSize.X / 2, 75)
-                esp.box.Position = UDim2.new(0, topPos.X, 0, topPos.Y)
-                esp.box.Visible = true
-                esp.line.Visible = false
-                esp.lbl.Text = string.format("[MOD VANISHED] %s (%s)\nBerada di World (Full Hide)", plr.Name, tostring(info.role))
+                o.lbl.Visible = false
             end
+        else
+            local margin = 36
+            local clamped = Vector2.new(
+                math.clamp(pos2D.X, margin, vs.X - margin),
+                math.clamp(pos2D.Y, margin + 30, vs.Y - margin)
+            )
+            local offscreen = (clamped - pos2D).Magnitude > 1
+
+            local delta = clamped - me2D
+            local len = delta.Magnitude
+            o.line.BackgroundColor3 = color
+            o.line.BackgroundTransparency = 0.25
+            o.line.Position = UDim2.fromOffset((me2D.X + clamped.X) / 2, (me2D.Y + clamped.Y) / 2)
+            o.line.Size = UDim2.fromOffset(len, 2)
+            o.line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+            o.line.Visible = len > 4
+
+            local sizePx = offscreen and 22 or 56
+            o.box.BackgroundColor3 = color
+            o.stroke.Color = color
+            o.box.Size = UDim2.fromOffset(sizePx, sizePx)
+            o.box.Position = UDim2.fromOffset(clamped.X, clamped.Y + sizePx / 2)
+            o.box.Visible = true
+
+            local dist = 0
+            if mx and entry then
+                dist = math.sqrt((entry.x - mx) ^ 2 + (entry.y - my) ^ 2)
+            end
+            o.lbl.TextColor3 = color
+            o.lbl.Position = UDim2.fromOffset(clamped.X, clamped.Y - (offscreen and 6 or 30))
+            o.lbl.Text = string.format("%s%s\n%s  •  %.0f tile%s",
+                modInfo and "[MOD] " or "", plr.Name, status, dist, offscreen and "  ➤" or "")
+            o.lbl.Visible = true
         end
     end
 end
+
+RunService.RenderStepped:Connect(function()
+    pcall(espRender)
+end)
+
+-- ---------------------------------------------------------------------
+-- JALAN OTOMATIS KE PLAYER (BUKAN TELEPORT)
+--  Menimpa input arah/lompat milik game (modul kontrol dengan dir()/jumping()),
+--  fallback VirtualInputManager (tombol panah) bila modul tidak ketemu.
+-- ---------------------------------------------------------------------
+local Walk = {
+    Active = false,
+    UserId = nil,
+    Name = "",
+    dir = 0,
+    jump = false,
+    Tbl = nil,
+    OrigDir = nil,
+    OrigJump = nil,
+    UseVIM = false,
+    KeyState = {},
+    StartedAt = 0,
+    LastX = nil,
+    LastCheck = 0,
+    JumpUntil = 0,
+    NextJump = 0,
+    Refresh = nil,   -- callback untuk menyegarkan tombol GO di list
+}
+
+local function walkFindInputTable()
+    if Walk.Tbl then return Walk.Tbl end
+    if type(getgc) ~= "function" then return nil end
+    if os.clock() - (Walk.LastScan or -99) < 10 then return nil end
+    Walk.LastScan = os.clock()
+    local ok, gc = pcall(getgc, true)
+    if not ok or type(gc) ~= "table" then return nil end
+    for _, obj in ipairs(gc) do
+        if type(obj) == "table"
+            and type(rawget(obj, "dir")) == "function"
+            and type(rawget(obj, "jumping")) == "function" then
+            Walk.Tbl = obj
+            return obj
+        end
+    end
+    return nil
+end
+
+local function walkVIMKey(code, down)
+    local ok, vim = pcall(function() return game:GetService("VirtualInputManager") end)
+    if not ok or not vim then return false end
+    if Walk.KeyState[code] == down then return true end
+    Walk.KeyState[code] = down
+    return pcall(function() vim:SendKeyEvent(down, code, false, game) end)
+end
+
+local function walkInstallHook()
+    if Walk.OrigDir then return true end
+    local t = walkFindInputTable()
+    if not t then
+        Walk.UseVIM = true
+        return true
+    end
+    if type(setreadonly) == "function" then pcall(setreadonly, t, false) end
+    local od, oj = rawget(t, "dir"), rawget(t, "jumping")
+    local okSet = pcall(function()
+        t.dir = function(...)
+            if Walk.Active then return Walk.dir end
+            return od(...)
+        end
+        t.jumping = function(...)
+            if Walk.Active and Walk.jump then return true end
+            return oj(...)
+        end
+    end)
+    if okSet and t.dir ~= od then
+        Walk.OrigDir, Walk.OrigJump = od, oj
+        Walk.UseVIM = false
+        return true
+    end
+    Walk.UseVIM = true
+    return true
+end
+
+local function walkStop(reason, silent)
+    local wasActive = Walk.Active
+    Walk.Active = false
+    Walk.dir = 0
+    Walk.jump = false
+    Walk.UserId = nil
+    if Walk.UseVIM then
+        walkVIMKey(Enum.KeyCode.Left, false)
+        walkVIMKey(Enum.KeyCode.Right, false)
+        walkVIMKey(Enum.KeyCode.Up, false)
+    end
+    if wasActive and reason and not silent then
+        notifyClient("ESP & Check", reason, 3)
+    end
+    if Walk.Refresh then pcall(Walk.Refresh) end
+end
+
+local function walkStart(userId, name)
+    if Walk.Active and Walk.UserId == userId then
+        walkStop("Jalan otomatis dihentikan")
+        return
+    end
+    local mx = espMyPos()
+    if not mx then
+        notifyClient("ESP & Check", "Posisimu belum terbaca. Masuk ke world dulu.", 4)
+        return
+    end
+    local entry = espEntryOf(userId)
+    if not (entry and entry.seen) then
+        notifyClient("ESP & Check", tostring(name) .. ": posisi tidak tersedia (hidden / tidak di world ini)", 4)
+        return
+    end
+    walkInstallHook()
+    Walk.Active = true
+    Walk.UserId = userId
+    Walk.Name = tostring(name)
+    Walk.StartedAt = os.clock()
+    Walk.LastX = nil
+    Walk.LastCheck = os.clock()
+    Walk.JumpUntil = 0
+    Walk.NextJump = 0
+    notifyClient("ESP & Check", "Berjalan ke " .. Walk.Name .. " ...", 2)
+    if Walk.Refresh then pcall(Walk.Refresh) end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Walk.Active then return end
+    local now = os.clock()
+
+    if now - Walk.StartedAt > 150 then
+        walkStop("Jalan otomatis berhenti (timeout)")
+        return
+    end
+
+    local mx, my = espMyPos()
+    local entry = espEntryOf(Walk.UserId)
+    if not mx then
+        walkStop("Posisimu tidak terbaca")
+        return
+    end
+    if not (entry and entry.seen) then
+        walkStop("Target hilang dari world / hidden")
+        return
+    end
+
+    local dx, dy = entry.x - mx, entry.y - my
+    if math.abs(dx) < 0.9 and math.abs(dy) < 1.6 then
+        walkStop("Sudah sampai di " .. Walk.Name)
+        return
+    end
+
+    local d = 0
+    if math.abs(dx) > 0.35 then d = dx > 0 and 1 or -1 end
+    Walk.dir = d
+
+    -- lompat: target lebih tinggi, atau tersangkut (posisi x tidak berubah)
+    if now - Walk.LastCheck >= 0.3 then
+        local stuck = Walk.LastX ~= nil and d ~= 0 and math.abs(mx - Walk.LastX) < 0.05
+        Walk.LastX = mx
+        Walk.LastCheck = now
+        if (stuck or dy < -1.2) and now >= Walk.NextJump then
+            Walk.JumpUntil = now + 0.28
+            Walk.NextJump = now + 0.7
+        end
+    end
+    Walk.jump = now < Walk.JumpUntil
+
+    if Walk.UseVIM then
+        walkVIMKey(Enum.KeyCode.Left, d < 0)
+        walkVIMKey(Enum.KeyCode.Right, d > 0)
+        walkVIMKey(Enum.KeyCode.Up, Walk.jump)
+    end
+end)
+
+-- ---------------------------------------------------------------------
+-- UI LIST PLAYER (EMBEDDED, SCROLLABLE, VIRTUAL)
+-- ---------------------------------------------------------------------
+local function espMountPlayerList()
+    task.spawn(function()
+        task.wait(0.6)
+        local cardContainer = findAnchorContainer("DAFTAR PLAYER", 40, 0.4)
+        if not cardContainer then return end
+        local old = cardContainer:FindFirstChild("R8DV_PlayerListBrowser")
+        if old then old:Destroy() end
+
+        local holder = Instance.new("Frame")
+        holder.Name = "R8DV_PlayerListBrowser"
+        holder.Size = UDim2.new(1, 0, 0, 400)
+        holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
+        holder.BorderSizePixel = 0
+        holder.LayoutOrder = 99
+        holder.Parent = cardContainer
+        uiCorner(holder, 10)
+        uiStroke(holder, Color3.fromRGB(38, 40, 48), 1)
+
+        local info = uiLabel(holder, "Memuat daftar player...", 11, Color3.fromRGB(155, 160, 175), UIFONT.med)
+        info.Size = UDim2.new(1, -20, 0, 22)
+        info.Position = UDim2.new(0, 12, 0, 6)
+
+        local COL_ON = Color3.fromRGB(40, 145, 85)
+        local COL_OFF = Color3.fromRGB(30, 33, 42)
+        local COL_GO = Color3.fromRGB(55, 105, 205)
+
+        local function makeRow(scroll)
+            local row = {}
+            local card = Instance.new("Frame")
+            card.Name = "PlayerRow"
+            card.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+            card.BorderSizePixel = 0
+            card.Parent = scroll
+            uiCorner(card, 7)
+            row.frame = card
+            row.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
+
+            row.dot = Instance.new("Frame")
+            row.dot.Size = UDim2.fromOffset(8, 8)
+            row.dot.Position = UDim2.new(0, 9, 0.5, -4)
+            row.dot.BorderSizePixel = 0
+            row.dot.Parent = card
+            uiCorner(row.dot, 99)
+
+            row.title = uiLabel(card, "", 12, Color3.fromRGB(242, 244, 250), UIFONT.bold)
+            row.title.Size = UDim2.new(1, -146, 0, 20)
+            row.title.Position = UDim2.new(0, 24, 0, 7)
+
+            row.sub = uiLabel(card, "", 10, Color3.fromRGB(145, 152, 168), UIFONT.reg)
+            row.sub.Size = UDim2.new(1, -146, 0, 18)
+            row.sub.Position = UDim2.new(0, 24, 0, 27)
+
+            local function btn(text, xOff)
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.fromOffset(58, 28)
+                b.Position = UDim2.new(1, xOff, 0.5, -14)
+                b.AutoButtonColor = false
+                b.TextSize = 10
+                b.Text = text
+                b.TextColor3 = Color3.fromRGB(255, 255, 255)
+                b.BackgroundColor3 = COL_OFF
+                lockFont(b, UIFONT.bold)
+                b.Parent = card
+                uiCorner(b, 6)
+                return b
+            end
+            row.espBtn = btn("ESP", -126)
+            row.goBtn = btn("GO", -64)
+
+            row.espBtn.Activated:Connect(function()
+                local it = row.item
+                if not it then return end
+                if ESP.Targets[it.userId] then
+                    ESP.Targets[it.userId] = nil
+                else
+                    ESP.Targets[it.userId] = true
+                end
+                row.dirty = true
+                if ESP.SoftRefresh then ESP.SoftRefresh() end
+            end)
+            row.goBtn.Activated:Connect(function()
+                local it = row.item
+                if not it then return end
+                walkStart(it.userId, it.name)
+            end)
+            return row
+        end
+
+        local function bindRow(row, it)
+            local active = ESP.Targets[it.userId] == true
+            local walking = Walk.Active and Walk.UserId == it.userId
+            local col
+            if it.isMod then col = Color3.fromRGB(255, 70, 70)
+            elseif it.hidden or it.status == "HIDDEN" then col = Color3.fromRGB(190, 120, 255)
+            elseif it.status == "TERLIHAT" then col = Color3.fromRGB(72, 199, 142)
+            else col = Color3.fromRGB(120, 125, 140) end
+            row.dot.BackgroundColor3 = col
+            row.stroke.Color = active and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
+
+            local nm = it.display
+            if it.display:lower() ~= it.name:lower() then nm = it.display .. "  (@" .. it.name .. ")" end
+            row.title.Text = (it.isMod and "[MOD] " or "") .. nm
+            row.sub.Text = string.format("%s%s%s", it.status,
+                it.dist and string.format("  •  %.0f tile", it.dist) or "",
+                it.role and ("  •  " .. it.role) or "")
+
+            row.espBtn.Text = active and "ESP ON" or "ESP"
+            row.espBtn.BackgroundColor3 = active and COL_ON or COL_OFF
+            row.goBtn.Text = walking and "STOP" or "GO"
+            row.goBtn.BackgroundColor3 = walking and Color3.fromRGB(165, 45, 55) or (it.hasPos and COL_GO or COL_OFF)
+            row.goBtn.TextTransparency = it.hasPos and 0 or 0.5
+        end
+
+        local vlist = newVList(holder, {
+            name = "PlayerListScroll",
+            rowH = 50,
+            gap = 6,
+            pad = 8,
+            size = UDim2.new(1, -20, 1, -64),
+            position = UDim2.new(0, 10, 0, 54),
+            makeRow = makeRow,
+            bind = bindRow,
+        })
+
+        -- tombol cepat: ESP semua / matikan semua
+        local function quickBtn(text, xScale, onClick)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0.5, -15, 0, 22)
+            b.Position = UDim2.new(xScale, xScale == 0 and 10 or 5, 0, 30)
+            b.AutoButtonColor = false
+            b.TextSize = 10
+            b.Text = text
+            b.TextColor3 = Color3.fromRGB(215, 220, 232)
+            b.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
+            lockFont(b, UIFONT.bold)
+            b.Parent = holder
+            uiCorner(b, 6)
+            b.Activated:Connect(onClick)
+            return b
+        end
+
+        local rows = {}
+        local function reload(toTop)
+            rows = espCollect()
+            local shown, mods, hid = #rows, 0, 0
+            for _, r in ipairs(rows) do
+                if r.isMod then mods += 1 end
+                if r.status == "HIDDEN" then hid += 1 end
+            end
+            local nTarget = 0
+            for _ in pairs(ESP.Targets) do nTarget += 1 end
+            info.Text = string.format("%d player  •  %d staff  •  %d hidden  •  %d ESP aktif", shown, mods, hid, nTarget)
+            vlist:SetData(rows, toTop)
+        end
+
+        quickBtn("ESP SEMUA YANG TAMPIL", 0, function()
+            for _, r in ipairs(rows) do ESP.Targets[r.userId] = true end
+            reload(false)
+        end)
+        quickBtn("MATIKAN SEMUA ESP", 0.5, function()
+            ESP.Targets = {}
+            espClearAll()
+            reload(false)
+        end)
+
+        ESP.SoftRefresh = function() reload(false) end
+        ESP.ListRefresh = function(toTop) reload(toTop) end
+        Walk.Refresh = function() vlist:Refresh() end
+
+        -- segarkan data tiap 1 detik (tidak mengulang scroll)
+        task.spawn(function()
+            while holder.Parent do
+                pcall(reload, false)
+                task.wait(1)
+            end
+        end)
+
+        reload(true)
+    end)
+end
+
 
 local function scanModerators()
     if not getValue("Mod_Enable", true) then
         if Spam.PausedByMod then setFreezeState(false) end
-        for plr in pairs(ModSys.ESPObjects) do removeModESP(plr) end
         return
     end
 
@@ -2291,7 +2537,6 @@ local function scanModerators()
         if not currentMods[plr] then
             notifyClient("Mod Left", string.format("Moderator %s telah keluar dari World.", plr.Name), 4)
             ModSys.ActiveMods[plr] = nil
-            removeModESP(plr)
         end
     end
 
@@ -2331,8 +2576,8 @@ end)
 Players.PlayerRemoving:Connect(function(plr)
     if ModSys.ActiveMods[plr] then
         ModSys.ActiveMods[plr] = nil
-        removeModESP(plr)
     end
+    espForget(plr)
     task.defer(scanModerators)
 end)
 
@@ -2343,11 +2588,6 @@ task.spawn(function()
     end
 end)
 
-RunService.RenderStepped:Connect(function()
-    if getValue("Mod_Enable", true) and getValue("Mod_ESP", true) and next(ModSys.ActiveMods) ~= nil then
-        pcall(updateModESP)
-    end
-end)
 
 -- =========================================================================
 -- KATEGORI 1: SPAMMER (DIPERTAHANKAN PENUH)
@@ -2476,24 +2716,24 @@ if UI.Category then UI:Category("Set Clothes") end
 
 feature("Item", "Set Clothes")({
     center = center(function(c)
-        c:Header("Set Clothes & Visual Catalog", "Katalog pakaian ber-ikon Asset ID, Bar Pakaian Aktif (1x Tap Copot) & Katalog (2x Tap Pakai)", "Client")
+        c:Header("Set Clothes & Visual Catalog", "Katalog pakaian dengan ikon asli game, bisa dicari. 1x tap = pakai / lepas (kembali ke set awal)", "Client")
 
         c:StatRow({
-            { Icon = "Bolt",   Label = "Bar Atas",     Value = "1x Tap Copot" },
-            { Icon = "Check",  Label = "Katalog",      Value = "2x Tap Pakai" },
+            { Icon = "Bolt",   Label = "Bar Atas",     Value = "1x Tap Lepas" },
+            { Icon = "Check",  Label = "Katalog",      Value = "1x Tap Pakai" },
             { Icon = "Shield", Label = "Kirim Server", Value = "Diblokir" }
         })
 
         local CatalogCard = c:Card("KATALOG VISUAL CLOTHES", nil, "Palette", {
-            Subtitle = "Bar atas menampilkan item dipakai (Tap 1x untuk lepas). Daftar bawah menampilkan katalog (Tap 2x untuk pakai)"
+            Subtitle = "Bar atas = item yang sedang dipakai (tap 1x untuk lepas). Daftar bawah = katalog (tap 1x untuk pakai, tap lagi untuk kembali ke awal)"
         })
-        CatalogCard:Input("Cari Nama / ID / Asset ID", "SC_Search", "Ketik nama item, ID, atau slot...", "", function(val)
+        CatalogCard:Input("Cari Nama / ID / Asset ID", "SC_Search", "Ketik nama item, ID, slot, atau asset id...", "", function(val)
             SC.SearchQuery = tostring(val or "")
-            if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
+            if SC.FilterFn then pcall(SC.FilterFn) end
         end)
         CatalogCard:Dropdown("Filter Kategori Slot", "SC_SlotFilter", SC.Slots, "All", function(slotVal)
             SC.SelectedSlot = tostring(slotVal or "All")
-            if SC.UpdateUIFn then pcall(SC.UpdateUIFn) end
+            if SC.FilterFn then pcall(SC.FilterFn) end
         end)
 
         local ManualCard = c:Card("Input Manual (Nama / ID)", nil, "Chat", {
@@ -2532,24 +2772,46 @@ feature("Item", "Set Clothes")({
 })
 
 -- =========================================================================
--- KATEGORI 4: MODS & ANTI-DETECTION
+-- KATEGORI 4: ESP & CHECK
 -- =========================================================================
-if UI.Category then UI:Category("Safety & Mods") end
+if UI.Category then UI:Category("ESP & Check") end
 
-feature("Shield", "Mod Detector & Anti-Detect")({
+feature("Shield", "ESP & Check")({
     center = center(function(c)
-        c:Header("Moderator Detector & ESP", "Deteksi Moderator/Admin masuk world, ESP lokasi (termasuk Hide/Vanish) & Auto Response", "Security")
+        c:Header("ESP & Check", "ESP player (termasuk hidden), jalan otomatis ke player, dan cek moderator di world", "Client")
 
         c:StatRow({
-            { Icon = "Shield", Label = "Detector", Value = "Real-time" },
-            { Icon = "Bolt",   Label = "Alert",    Value = "Anti-Spam (1x)" },
-            { Icon = "Check",  Label = "ESP",      Value = "Visible + Hide" }
+            { Icon = "Shield", Label = "Check",  Value = "Real-time" },
+            { Icon = "Bolt",   Label = "ESP",    Value = "Visual client" },
+            { Icon = "Check",  Label = "Go To",  Value = "Jalan kaki" }
         })
 
-        local ModCard = c:Card("MONITOR MODERATOR WORLD", nil, "Shield", {
+        local EspCard = c:Card("ESP PLAYER", nil, "Bolt", {
+            Subtitle = "Garis, kotak, nama & jarak ke player. Hanya tampil di layarmu (client)"
+        })
+        EspCard:Toggle("ESP ON / OFF", "ESP_Master", true, function(st)
+            if not st then espClearAll() end
+        end)
+        EspCard:Toggle("ESP semua player di world", "ESP_All", false)
+        EspCard:Toggle("Tampilkan player hidden / vanish", "ESP_Hidden", true)
+        EspCard:Toggle("Auto-ESP untuk Moderator / Staff", "Mod_ESP", true)
+
+        local ListCard = c:Card("DAFTAR PLAYER (ESP & GO TO)", nil, "Chat", {
+            Subtitle = "Tombol ESP = tampilkan ESP ke player itu. Tombol GO = jalan otomatis ke lokasinya (bukan teleport)"
+        })
+        ListCard:Input("Cari Player", "ESP_Search", "Ketik nama / display name / ID...", "", function(val)
+            ESP.Search = tostring(val or "")
+            if ESP.ListRefresh then pcall(ESP.ListRefresh, true) end
+        end)
+        ListCard:Dropdown("Filter Daftar", "ESP_Filter", ESP_FILTERS, "Semua", function(v)
+            ESP.Filter = tostring(v or "Semua")
+            if ESP.ListRefresh then pcall(ESP.ListRefresh, true) end
+        end)
+
+        local ModCard = c:Card("CHECK MODERATOR WORLD", nil, "Shield", {
             Subtitle = "Notifikasi siapa Mod yang masuk/ada di world tanpa spam berulang untuk Mod yang sama"
         })
-        ModCard:Toggle("Aktifkan Mod Detector", "Mod_Enable", true, function()
+        ModCard:Toggle("Aktifkan Check Moderator", "Mod_Enable", true, function()
             task.defer(scanModerators)
         end)
         ModCard:Toggle("Aktifkan Action Otomatis (Exit / Diem)", "Mod_AutoAction", true, function()
@@ -2561,11 +2823,6 @@ feature("Shield", "Mod Detector & Anti-Detect")({
             "Notify Only (Hanya Kasih Tahu)"
         }, "Diem (Freeze + Stop Spam)", function()
             task.defer(scanModerators)
-        end)
-        ModCard:Toggle("ESP Garis & Box ke Lokasi Mod (Support Hide)", "Mod_ESP", true, function(st)
-            if not st then
-                for plr in pairs(ModSys.ESPObjects) do removeModESP(plr) end
-            end
         end)
         ModCard:Toggle("Tahan Paket Gerak Saat Mode Diem", "Mod_FreezePacket", false)
         ModCard:Toggle("Force Disconnect Jika Paket Exit Ditolak", "Mod_HardKickOnExit", true)
@@ -2590,6 +2847,18 @@ feature("Shield", "Mod Detector & Anti-Detect")({
     end),
 
     right = right(function(r)
+        local WalkCard = r:Card("Jalan Otomatis", nil, "Bolt", {
+            Subtitle = "Karakter berjalan sendiri ke player lewat input game, tanpa teleport"
+        })
+        WalkCard:Button("Hentikan Jalan Otomatis", "STOP", "Check", function()
+            walkStop("Jalan otomatis dihentikan")
+        end)
+        WalkCard:Button("Matikan Semua ESP Player", "ESP OFF", "Shield", function()
+            ESP.Targets = {}
+            espClearAll()
+            if ESP.ListRefresh then pcall(ESP.ListRefresh, false) end
+        end)
+
         local StatusCard = r:Card("Status Moderator Saat Ini", nil, "Clock", {
             Subtitle = "Daftar Moderator yang terdeteksi di dalam world saat ini"
         })
@@ -2607,7 +2876,7 @@ feature("Shield", "Mod Detector & Anti-Detect")({
         end)
         StatusCard:Button("Lepas Freeze Karakter Manual", "UNFREEZE", "Check", function()
             setFreezeState(false)
-            notifyClient("Mod Detector", "Karakter di-unfreeze secara manual", 3)
+            notifyClient("ESP & Check", "Karakter di-unfreeze secara manual", 3)
         end)
 
         local TrafficCard = r:Card("Statistik Packet Guard", nil, "Shield", {
@@ -2627,7 +2896,7 @@ task.spawn(function()
     task.wait(1.0)
     for _, root in ipairs(lightFindRoots()) do
         for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text:find("MONITOR MODERATOR WORLD", 1, true) then
+            if d:IsA("TextLabel") and d.Text:find("CHECK MODERATOR WORLD", 1, true) then
                 local container = d.Parent
                 while container and not (container:IsA("Frame") or container:IsA("ScrollingFrame")) do
                     container = container.Parent
@@ -2705,6 +2974,7 @@ feature("Misc", "Misc")({
 task.spawn(function()
     pcall(scHook)
     scMountEmbeddedBrowser()
+    espMountPlayerList()
     task.wait(1.5)
     if getValue("LightText", true) then pcall(lightEnable) end
 end)
