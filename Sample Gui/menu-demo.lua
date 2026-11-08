@@ -393,6 +393,55 @@ task.spawn(function()
 end)
 
 -- =========================================================================
+-- SET CLOTHES FX (micro animation helper, dipakai UI katalog clothes)
+-- =========================================================================
+local SCFX = {
+    Service = game:GetService("TweenService"),
+    Running = setmetatable({}, { __mode = "k" }),
+    KeepPinned = true, -- true = item aktif dari menu tetap dipakai walau game mengembalikan baju asli
+}
+
+function SCFX.Cancel(obj)
+    local prev = SCFX.Running[obj]
+    if prev then
+        prev:Cancel()
+        SCFX.Running[obj] = nil
+    end
+end
+
+function SCFX.Tween(obj, dur, props, style, dir)
+    SCFX.Cancel(obj)
+    local tw = SCFX.Service:Create(obj, TweenInfo.new(dur or 0.16, style or Enum.EasingStyle.Quad,
+        dir or Enum.EasingDirection.Out), props)
+    SCFX.Running[obj] = tw
+    tw:Play()
+    return tw
+end
+
+function SCFX.Set(obj, props)
+    SCFX.Cancel(obj)
+    for k, v in pairs(props) do obj[k] = v end
+end
+
+function SCFX.BtnFx(btn, base, hover)
+    local fx = { base = base, hover = hover or base, over = false, down = false }
+    local sc = Instance.new("UIScale")
+    sc.Parent = btn
+    function fx.apply()
+        SCFX.Tween(btn, 0.12, { BackgroundColor3 = (fx.over and fx.hover) or fx.base })
+        SCFX.Tween(sc, 0.09, { Scale = fx.down and 0.94 or 1 })
+    end
+    local function isPress(i)
+        return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
+    end
+    btn.MouseEnter:Connect(function() fx.over = true; fx.apply() end)
+    btn.MouseLeave:Connect(function() fx.over = false; fx.down = false; fx.apply() end)
+    btn.InputBegan:Connect(function(i) if isPress(i) then fx.down = true; fx.apply() end end)
+    btn.InputEnded:Connect(function(i) if isPress(i) then fx.down = false; fx.apply() end end)
+    return fx
+end
+
+-- =========================================================================
 -- SET CLOTHES (CORE)
 -- =========================================================================
 local SC = {
@@ -974,7 +1023,9 @@ local function scKeepAlive()
             local want = o.vis or nil
             local cur = W[slot]
             if cur ~= want then
-                if cur == nil then
+                -- cur == o.real artinya game cuma mengembalikan baju asli -> pasang lagi (status aktif permanen).
+                -- cur lain (bukan asli, bukan pilihan kita) = player ganti baju sendiri -> lepas override.
+                if cur == nil or (SCFX.KeepPinned and cur == o.real) then
                     W[slot] = want
                     changed = true
                 else
@@ -1294,10 +1345,9 @@ end
 local WORN_TAPS = 1
 
 local function newVGrid(parent, opts)
-    local cell = opts.cell
+    local minCell = opts.cell
     local gap = opts.gap or 8
     local pad = opts.pad or 8
-    local step = cell + gap
 
     local scroll = Instance.new("ScrollingFrame")
     scroll.Name = opts.name or "VGrid"
@@ -1313,23 +1363,44 @@ local function newVGrid(parent, opts)
     uiCorner(scroll, 8)
     uiStroke(scroll, Color3.fromRGB(32, 34, 42), 1)
 
-    local G = { Scroll = scroll, Data = {}, Pool = {}, Cols = 1 }
+    -- Probe 100x100 offset: mengukur skala asli (UIScale window / HUD scale) supaya
+    -- hitungan kolom tidak meleset dan grid tidak bolong / miring di scale selain 100%.
+    local probe = Instance.new("Frame")
+    probe.Name = "ScaleProbe"
+    probe.Size = UDim2.fromOffset(100, 100)
+    probe.BackgroundTransparency = 1
+    probe.BorderSizePixel = 0
+    probe.ZIndex = 0
+    probe.Parent = scroll
+
+    local G = { Scroll = scroll, Data = {}, Pool = {}, Cols = 1, Cell = minCell }
+
+    function G:Metrics()
+        local px = probe.AbsoluteSize.X
+        local k = px > 0 and (px / 100) or 1
+        local w = scroll.AbsoluteSize.X / k - scroll.ScrollBarThickness - 2
+        local h = scroll.AbsoluteWindowSize.Y / k
+        if w <= pad * 2 then w = 420 end
+        if h <= 0 then h = 380 end
+        local cols = math.max(1, math.floor((w - pad * 2 + gap) / (minCell + gap)))
+        -- kotak melebar rata mengisi baris -> tidak ada sisa ruang kosong kiri/kanan
+        local cell = math.max(minCell, math.floor((w - pad * 2 - gap * (cols - 1)) / cols))
+        return w, h, cols, cell
+    end
 
     function G:Layout()
-        local w = scroll.AbsoluteSize.X - 8
-        local h = scroll.AbsoluteWindowSize.Y
-        if w <= 0 then w = 420 end
-        if h <= 0 then h = 380 end
-        local cols = math.max(1, math.floor((w - pad * 2 + gap) / step))
-        self.Cols = cols
+        local w, h, cols, cell = self:Metrics()
+        local step = cell + gap
+        self.Cols, self.Cell = cols, cell
+
         local total = #self.Data
         local rows = math.ceil(total / cols)
         scroll.CanvasSize = UDim2.fromOffset(0, total > 0 and (pad * 2 + rows * step - gap) or 0)
 
+        -- pool selalu cukup: baris terlihat + buffer 3 baris, dihitung ulang tiap Layout
         local need = (math.ceil(h / step) + 3) * cols
         while #self.Pool < need do
             local c = opts.makeCell(scroll)
-            c.frame.Size = UDim2.fromOffset(cell, cell)
             c.frame.Visible = false
             self.Pool[#self.Pool + 1] = c
         end
@@ -1346,7 +1417,12 @@ local function newVGrid(parent, opts)
             local item = self.Data[idx]
             local r = math.floor((idx - 1) / cols)
             local col = (idx - 1) % cols
-            c.frame.Position = UDim2.fromOffset(xOff + col * step, pad + r * step)
+            if c.cellSize ~= cell then
+                c.cellSize = cell
+                c.frame.Size = UDim2.fromOffset(cell, cell)
+            end
+            -- AnchorPoint tengah (0.5) -> animasi scale tumbuh dari tengah kotak
+            c.frame.Position = UDim2.fromOffset(xOff + col * step + cell / 2, pad + r * step + cell / 2)
             if c.item ~= item or c.dirty then
                 c.item = item
                 c.dirty = false
@@ -1376,6 +1452,7 @@ local function newVGrid(parent, opts)
 
     scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() G:Layout() end)
     scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() G:Layout() end)
+    probe:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() G:Layout() end)
     return G
 end
 
@@ -1437,6 +1514,7 @@ local function scMountEmbeddedBrowser()
         uiCorner(unwearBtn, 5)
         uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
         unwearBtn.Activated:Connect(function() scUnwearAll() end)
+        SCFX.BtnFx(unwearBtn, Color3.fromRGB(52, 22, 28), Color3.fromRGB(72, 28, 36))
 
         local wornScroll = Instance.new("ScrollingFrame")
         wornScroll.Size = UDim2.new(1, -16, 0, 80)
@@ -1491,6 +1569,7 @@ local function scMountEmbeddedBrowser()
         lockFont(clearSearchBtn, UIFONT.bold)
         clearSearchBtn.Parent = topSearchFrame
         uiCorner(clearSearchBtn, 6)
+        SCFX.BtnFx(clearSearchBtn, Color3.fromRGB(34, 37, 48), Color3.fromRGB(50, 54, 68))
 
         -- ================= 3) STRIP INFO ITEM TERPILIH =================
         local infoStrip = Instance.new("Frame")
@@ -1513,54 +1592,119 @@ local function scMountEmbeddedBrowser()
         infoIcon.frame.Visible = false
 
         local infoName = uiLabel(infoStrip, "Pilih item untuk melihat detail", 12, Color3.fromRGB(244, 246, 252), UIFONT.bold)
-        infoName.Size = UDim2.new(1, -130, 0, 20)
+        infoName.Size = UDim2.new(1, -150, 0, 20)
         infoName.Position = UDim2.new(0, 60, 0, 9)
 
         local infoSub = uiLabel(infoStrip, "", 10, Color3.fromRGB(148, 155, 172), UIFONT.reg)
-        infoSub.Size = UDim2.new(1, -130, 0, 16)
+        infoSub.Size = UDim2.new(1, -150, 0, 16)
         infoSub.Position = UDim2.new(0, 60, 0, 31)
 
-        local infoStatus = Instance.new("Frame")
-        infoStatus.Size = UDim2.fromOffset(12, 12)
-        infoStatus.Position = UDim2.new(1, -24, 0.5, -6)
-        infoStatus.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
-        infoStatus.BorderSizePixel = 0
-        infoStatus.Visible = false
-        infoStatus.Parent = infoStrip
-        uiCorner(infoStatus, 99)
+        local grid
+        local ACT_ON = { bg = Color3.fromRGB(22, 56, 40), hv = Color3.fromRGB(30, 74, 53),
+            tx = Color3.fromRGB(110, 228, 165), st = Color3.fromRGB(60, 185, 115) }
+        local ACT_OFF = { bg = Color3.fromRGB(52, 22, 28), hv = Color3.fromRGB(72, 28, 36),
+            tx = Color3.fromRGB(255, 120, 130), st = Color3.fromRGB(165, 55, 65) }
+
+        local infoAct = Instance.new("TextButton")
+        infoAct.Name = "InfoAction"
+        infoAct.Size = UDim2.fromOffset(66, 28)
+        infoAct.AnchorPoint = Vector2.new(1, 0.5)
+        infoAct.Position = UDim2.new(1, -10, 0.5, 0)
+        infoAct.BackgroundColor3 = ACT_ON.bg
+        infoAct.AutoButtonColor = false
+        infoAct.TextSize = 10
+        infoAct.TextColor3 = ACT_ON.tx
+        infoAct.Text = "PAKAI"
+        infoAct.Visible = false
+        lockFont(infoAct, UIFONT.bold)
+        infoAct.Parent = infoStrip
+        uiCorner(infoAct, 6)
+        local infoActStroke = uiStroke(infoAct, ACT_ON.st, 1)
+        local infoActFx = SCFX.BtnFx(infoAct, ACT_ON.bg, ACT_ON.hv)
+
+        local infoScale = Instance.new("UIScale")
+        infoScale.Parent = infoIconBg
 
         local selId
+
+        -- Sinkronkan tombol PAKAI / LEPAS dengan status item terpilih (selalu dari SC.Worn)
+        local function syncInfo()
+            local item = selId and SC.ItemMap and SC.ItemMap[selId]
+            if not item then
+                infoAct.Visible = false
+                return
+            end
+            local eq = ((SC.Worn or {})[item.slot] == item.id)
+            local pal = eq and ACT_OFF or ACT_ON
+            infoAct.Visible = true
+            infoAct.Text = eq and "LEPAS" or "PAKAI"
+            infoAct.TextColor3 = pal.tx
+            infoActFx.base, infoActFx.hover = pal.bg, pal.hv
+            infoActFx.apply()
+            SCFX.Tween(infoActStroke, 0.16, { Color = pal.st })
+        end
+
         local function setInfo(item)
-            selId = item and item.id or nil
+            local newId = item and item.id or nil
+            local changed = (newId ~= selId)
+            selId = newId
             if not item then
                 infoIcon.frame.Visible = false
                 infoName.Text = "Pilih item untuk melihat detail"
                 infoSub.Text = ""
-                infoStatus.Visible = false
+                infoAct.Visible = false
                 return
             end
             scSetIcon(infoIcon, item.id)
+            infoIcon.frame.Visible = true
             infoName.Text = item.name
             infoSub.Text = string.format("%s  •  #%d  •  rbxassetid://%s%s", item.slot:upper(), item.id,
                 item.assetNum, item.doubleJump and "  •  2x JUMP" or "")
-            infoStatus.Visible = ((SC.Worn or {})[item.slot] == item.id)
+            if changed then
+                -- perpindahan item terasa hidup: ikon pop, teks fade-in
+                infoScale.Scale = 0.8
+                SCFX.Tween(infoScale, 0.26, { Scale = 1 }, Enum.EasingStyle.Back)
+                infoName.TextTransparency = 1
+                infoSub.TextTransparency = 1
+                SCFX.Tween(infoName, 0.18, { TextTransparency = 0 })
+                SCFX.Tween(infoSub, 0.18, { TextTransparency = 0 })
+            end
+            syncInfo()
         end
 
+        infoAct.Activated:Connect(function()
+            if not selId then return end
+            scWearOrToggleItem(selId)
+            syncInfo()
+            if grid then grid:Refresh() end
+        end)
+
         -- ================= 4) GRID KATALOG (KOTAK) =================
-        local grid
+        local COL_CELL, COL_CELL_H = Color3.fromRGB(20, 22, 28), Color3.fromRGB(29, 32, 42)
+        local COL_ACT, COL_ACT_H = Color3.fromRGB(22, 54, 40), Color3.fromRGB(28, 68, 50)
+        local COL_ST, COL_ST_H = Color3.fromRGB(38, 42, 52), Color3.fromRGB(88, 95, 116)
+        local COL_ST_ACT, COL_ST_SEL = Color3.fromRGB(60, 185, 115), Color3.fromRGB(235, 238, 250)
+
+        local function isPressInput(i)
+            return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
+        end
 
         local function makeCell(scroll)
-            local c = {}
+            local c = { hover = false, press = false, eq = false, sel = false }
             local card = Instance.new("TextButton")
             card.Name = "ItemCell"
             card.BorderSizePixel = 0
             card.AutoButtonColor = false
             card.Text = ""
+            card.AnchorPoint = Vector2.new(0.5, 0.5)
+            card.BackgroundColor3 = COL_CELL
             card.Parent = scroll
             uiCorner(card, 8)
             c.frame = card
             c.card = card
-            c.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
+            c.stroke = uiStroke(card, COL_ST, 1)
+            c.scale = Instance.new("UIScale")
+            c.scale.Parent = card
 
             local iconBg = Instance.new("Frame")
             iconBg.Size = UDim2.new(1, -10, 1, -10)
@@ -1572,15 +1716,45 @@ local function scMountEmbeddedBrowser()
             c.icon = scMakeIcon(iconBg, 3)
 
             local mark = Instance.new("Frame")
-            mark.Size = UDim2.fromOffset(10, 10)
-            mark.Position = UDim2.new(1, -14, 0, 4)
+            mark.Size = UDim2.fromOffset(0, 0)
+            mark.AnchorPoint = Vector2.new(0.5, 0.5)
+            mark.Position = UDim2.new(1, -10, 0, 10)
             mark.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
             mark.BorderSizePixel = 0
             mark.ZIndex = 6
-            mark.Visible = false
             mark.Parent = card
             uiCorner(mark, 99)
             c.mark = mark
+
+            -- Satu fungsi gaya: status aktif (bg hijau + dot) PERMANEN selama item dipakai,
+            -- seleksi (ring putih) terpisah, hover/press hanya efek sementara.
+            function c.restyle(animate)
+                if not c.item then return end
+                local eq, sel = c.eq, c.sel
+                local bg = eq and (c.hover and COL_ACT_H or COL_ACT) or (c.hover and COL_CELL_H or COL_CELL)
+                local stc = sel and COL_ST_SEL or (eq and COL_ST_ACT or (c.hover and COL_ST_H or COL_ST))
+                local th = sel and 2 or (eq and 1.5 or 1)
+                local sc = c.press and 0.93 or (c.hover and 1.07 or 1)
+                local mk = eq and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0)
+                card.ZIndex = c.hover and 3 or 1
+                if animate then
+                    SCFX.Tween(card, 0.16, { BackgroundColor3 = bg })
+                    SCFX.Tween(c.stroke, 0.16, { Color = stc, Thickness = th })
+                    SCFX.Tween(c.scale, c.press and 0.07 or 0.14, { Scale = sc })
+                    SCFX.Tween(mark, eq and 0.26 or 0.14, { Size = mk },
+                        eq and Enum.EasingStyle.Back or Enum.EasingStyle.Quad)
+                else
+                    SCFX.Set(card, { BackgroundColor3 = bg })
+                    SCFX.Set(c.stroke, { Color = stc, Thickness = th })
+                    SCFX.Set(c.scale, { Scale = sc })
+                    SCFX.Set(mark, { Size = mk })
+                end
+            end
+
+            card.MouseEnter:Connect(function() c.hover = true; c.restyle(true) end)
+            card.MouseLeave:Connect(function() c.hover = false; c.press = false; c.restyle(true) end)
+            card.InputBegan:Connect(function(i) if isPressInput(i) then c.press = true; c.restyle(true) end end)
+            card.InputEnded:Connect(function(i) if isPressInput(i) then c.press = false; c.restyle(true) end end)
 
             card.Activated:Connect(function()
                 local item = c.item
@@ -1594,6 +1768,7 @@ local function scMountEmbeddedBrowser()
                     SC.LastTapId, SC.LastTapTime = item.id, now
                     setInfo(item)
                 end
+                syncInfo()
                 if grid then grid:Refresh() end
             end)
             return c
@@ -1602,22 +1777,21 @@ local function scMountEmbeddedBrowser()
         local function bindCell(c, item)
             if not item then return end
             local W = SC.Worn or {}
-            local eq = (W[item.slot] == item.id)
-            local sel = (selId == item.id)
-            c.card.BackgroundColor3 = eq and Color3.fromRGB(20, 44, 34) or Color3.fromRGB(20, 22, 28)
-            c.stroke.Color = sel and Color3.fromRGB(235, 238, 250)
-                or (eq and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52))
-            c.stroke.Thickness = sel and 2 or 1
-            c.mark.Visible = eq
-            if c.iconId ~= item.id then
-                c.iconId = item.id
+            local sameItem = (c.boundId == item.id)
+            c.eq = (W[item.slot] == item.id)
+            c.sel = (selId == item.id)
+            if not sameItem then
+                -- kotak didaur ulang saat scroll (item beda): set langsung tanpa animasi
+                c.boundId = item.id
+                c.press = false
                 scSetIcon(c.icon, item.id)
             end
+            c.restyle(sameItem)
         end
 
         grid = newVGrid(holder, {
             name = "ClothesGrid",
-            cell = 72, gap = 8, pad = 8,
+            cell = 70, gap = 8, pad = 8,
             size = UDim2.new(1, -20, 0, 404),
             position = UDim2.new(0, 10, 0, 248),
             makeCell = makeCell,
@@ -1625,16 +1799,109 @@ local function scMountEmbeddedBrowser()
         })
 
         -- ================= REFRESH BAR DIPAKAI =================
+        -- Tile per slot dipertahankan (keyed) -> tidak dihancurkan tiap refresh:
+        -- tile baru pop-in, tile dilepas shrink-out, ganti item di slot sama = ikon pop.
         local lastWornTap = { slot = nil, t = 0 }
+        local wornTiles = {}
+        local lastCount = nil
+
+        local dotScale = Instance.new("UIScale")
+        dotScale.Parent = statusDot
+
+        local COL_W_BG, COL_W_ST, COL_W_TX = Color3.fromRGB(26, 28, 36), Color3.fromRGB(48, 52, 64), Color3.fromRGB(165, 170, 185)
+        local COL_V_BG, COL_V_ST, COL_V_TX = Color3.fromRGB(24, 36, 52), Color3.fromRGB(65, 140, 230), Color3.fromRGB(115, 185, 255)
+        local COL_DANGER = Color3.fromRGB(235, 80, 90)
+
+        local function slotText(slot)
+            local s = tostring(slot)
+            return s:sub(1, 1):upper() .. s:sub(2)
+        end
+
+        local function createWornTile(slot)
+            local t = { slot = slot, hover = false, press = false, vis = false }
+            local tile = Instance.new("TextButton")
+            tile.Size = UDim2.fromOffset(66, 76)
+            tile.BackgroundColor3 = COL_W_BG
+            tile.AutoButtonColor = false
+            tile.Text = ""
+            tile.Parent = wornScroll
+            uiCorner(tile, 8)
+            t.tile = tile
+            t.stroke = uiStroke(tile, COL_W_ST, 1)
+            t.scale = Instance.new("UIScale")
+            t.scale.Parent = tile
+
+            local ib = Instance.new("Frame")
+            ib.Size = UDim2.fromOffset(54, 54)
+            ib.Position = UDim2.new(0.5, -27, 0, 4)
+            ib.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+            ib.BorderSizePixel = 0
+            ib.Parent = tile
+            uiCorner(ib, 6)
+            t.icon = scMakeIcon(ib, 3)
+
+            t.lbl = uiLabel(tile, slotText(slot), 9, COL_W_TX, UIFONT.med, Enum.TextXAlignment.Center)
+            t.lbl.Size = UDim2.new(1, -4, 0, 12)
+            t.lbl.Position = UDim2.new(0, 2, 1, -15)
+
+            function t.restyle(animate)
+                local bg = t.vis and COL_V_BG or COL_W_BG
+                local stc = t.hover and COL_DANGER or (t.vis and COL_V_ST or COL_W_ST)
+                local tx = t.vis and COL_V_TX or COL_W_TX
+                local sc = t.press and 0.93 or (t.hover and 1.05 or 1)
+                if animate then
+                    SCFX.Tween(tile, 0.16, { BackgroundColor3 = bg })
+                    SCFX.Tween(t.stroke, 0.16, { Color = stc })
+                    SCFX.Tween(t.lbl, 0.16, { TextColor3 = tx })
+                    SCFX.Tween(t.scale, t.press and 0.07 or 0.14, { Scale = sc })
+                else
+                    SCFX.Set(tile, { BackgroundColor3 = bg })
+                    SCFX.Set(t.stroke, { Color = stc })
+                    SCFX.Set(t.lbl, { TextColor3 = tx })
+                    SCFX.Set(t.scale, { Scale = sc })
+                end
+            end
+
+            tile.MouseEnter:Connect(function() t.hover = true; t.restyle(true) end)
+            tile.MouseLeave:Connect(function() t.hover = false; t.press = false; t.restyle(true) end)
+            tile.InputBegan:Connect(function(i) if isPressInput(i) then t.press = true; t.restyle(true) end end)
+            tile.InputEnded:Connect(function(i) if isPressInput(i) then t.press = false; t.restyle(true) end end)
+            tile.Activated:Connect(function()
+                if t.dying then return end
+                if WORN_TAPS <= 1 then
+                    scRemoveSlot(t.slot)
+                else
+                    local now = os.clock()
+                    if lastWornTap.slot == t.slot and now - lastWornTap.t <= 0.5 then
+                        lastWornTap.slot = nil
+                        scRemoveSlot(t.slot)
+                    else
+                        lastWornTap.slot, lastWornTap.t = t.slot, now
+                    end
+                end
+            end)
+            return t
+        end
+
+        local function dropWornTile(slot)
+            local t = wornTiles[slot]
+            if not t then return end
+            wornTiles[slot] = nil
+            t.dying = true
+            t.tile.Active = false
+            SCFX.Tween(t.scale, 0.16, { Scale = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+            task.delay(0.2, function()
+                if t.tile then t.tile:Destroy() end
+            end)
+        end
 
         local function refreshWornColumn()
-            for _, ch in ipairs(wornScroll:GetChildren()) do
-                if ch:IsA("GuiObject") then ch:Destroy() end
-            end
             local W = SC.Worn or scFindWorn()
             if not W or not SC.DB then
-                statusDot.BackgroundColor3 = Color3.fromRGB(240, 170, 60)
+                SCFX.Tween(statusDot, 0.2, { BackgroundColor3 = Color3.fromRGB(240, 170, 60) })
                 wornTitle.Text = "BELUM TERHUBUNG (masuk World dulu)"
+                for slot in pairs(wornTiles) do dropWornTile(slot) end
+                lastCount = nil
                 return
             end
             local entries = {}
@@ -1643,52 +1910,54 @@ local function scMountEmbeddedBrowser()
                 if dbIt then entries[#entries + 1] = { slot = slot, id = id } end
             end
             table.sort(entries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
-            statusDot.BackgroundColor3 = #entries > 0 and Color3.fromRGB(72, 199, 142) or Color3.fromRGB(120, 125, 140)
+
+            SCFX.Tween(statusDot, 0.2, { BackgroundColor3 = #entries > 0
+                and Color3.fromRGB(72, 199, 142) or Color3.fromRGB(120, 125, 140) })
             wornTitle.Text = string.format("DIPAKAI SEKARANG (%d)", #entries)
+            if lastCount ~= nil and lastCount ~= #entries then
+                dotScale.Scale = 1.8
+                SCFX.Tween(dotScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+            end
+            lastCount = #entries
 
+            local keep = {}
             for i, e in ipairs(entries) do
-                local isVis = SC.Ov[e.slot] ~= nil
-                local tile = Instance.new("TextButton")
-                tile.LayoutOrder = i
-                tile.Size = UDim2.fromOffset(66, 76)
-                tile.BackgroundColor3 = isVis and Color3.fromRGB(24, 36, 52) or Color3.fromRGB(26, 28, 36)
-                tile.AutoButtonColor = false
-                tile.Text = ""
-                tile.Parent = wornScroll
-                uiCorner(tile, 8)
-                local cs = uiStroke(tile, isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64), 1)
-
-                local ib = Instance.new("Frame")
-                ib.Size = UDim2.fromOffset(54, 54)
-                ib.Position = UDim2.new(0.5, -27, 0, 4)
-                ib.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
-                ib.BorderSizePixel = 0
-                ib.Parent = tile
-                uiCorner(ib, 6)
-                scSetIcon(scMakeIcon(ib, 3), e.id)
-
-                local slotLbl = uiLabel(tile, tostring(e.slot):sub(1, 1):upper() .. tostring(e.slot):sub(2), 9,
-                    isVis and Color3.fromRGB(115, 185, 255) or Color3.fromRGB(165, 170, 185), UIFONT.med, Enum.TextXAlignment.Center)
-                slotLbl.Size = UDim2.new(1, -4, 0, 12)
-                slotLbl.Position = UDim2.new(0, 2, 1, -15)
-
-                tile.MouseEnter:Connect(function() cs.Color = Color3.fromRGB(235, 80, 90) end)
-                tile.MouseLeave:Connect(function()
-                    cs.Color = isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64)
-                end)
-                tile.Activated:Connect(function()
-                    if WORN_TAPS <= 1 then
-                        scRemoveSlot(e.slot)
-                    else
-                        local now = os.clock()
-                        if lastWornTap.slot == e.slot and now - lastWornTap.t <= 0.5 then
-                            lastWornTap.slot = nil
-                            scRemoveSlot(e.slot)
-                        else
-                            lastWornTap.slot, lastWornTap.t = e.slot, now
-                        end
+                keep[e.slot] = true
+                local t = wornTiles[e.slot]
+                local fresh = false
+                if not t then
+                    t = createWornTile(e.slot)
+                    wornTiles[e.slot] = t
+                    fresh = true
+                end
+                t.tile.LayoutOrder = i
+                t.vis = (SC.Ov[e.slot] ~= nil)
+                if t.id ~= e.id then
+                    local swapped = (t.id ~= nil)
+                    t.id = e.id
+                    scSetIcon(t.icon, e.id)
+                    if swapped then
+                        t.popUntil = os.clock() + 0.3
+                        t.scale.Scale = 0.8
+                        SCFX.Tween(t.scale, 0.26, { Scale = 1 }, Enum.EasingStyle.Back)
                     end
-                end)
+                end
+                if fresh then
+                    t.restyle(false)
+                    t.popUntil = os.clock() + 0.3
+                    t.scale.Scale = 0.6
+                    SCFX.Tween(t.scale, 0.28, { Scale = 1 }, Enum.EasingStyle.Back)
+                elseif t.popUntil and os.clock() < t.popUntil then
+                    -- pop masih berjalan: cukup update warna, jangan putus animasinya
+                    SCFX.Tween(t.tile, 0.16, { BackgroundColor3 = t.vis and COL_V_BG or COL_W_BG })
+                    SCFX.Tween(t.stroke, 0.16, { Color = t.vis and COL_V_ST or COL_W_ST })
+                    SCFX.Tween(t.lbl, 0.16, { TextColor3 = t.vis and COL_V_TX or COL_W_TX })
+                else
+                    t.restyle(true)
+                end
+            end
+            for slot in pairs(wornTiles) do
+                if not keep[slot] then dropWornTile(slot) end
             end
         end
 
@@ -1721,9 +1990,7 @@ local function scMountEmbeddedBrowser()
         local function refreshAll()
             refreshWornColumn()
             grid:Refresh()
-            if selId and SC.DB and SC.DB[selId] and SC.ItemMap[selId] then
-                infoStatus.Visible = ((SC.Worn or {})[SC.ItemMap[selId].slot] == selId)
-            end
+            syncInfo()
         end
 
         local filterToken = 0
