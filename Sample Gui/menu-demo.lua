@@ -73,7 +73,7 @@ local function notifyClient(title, text, duration)
 end
 
 -- =========================================================================
--- LOGIKA SPAM (DIPERTAHANKAN + INTEGRASI MOD FREEZE & ANTI-DETECTION)
+-- LOGIKA SPAM
 -- =========================================================================
 local MAX_CHAT = 120
 
@@ -181,7 +181,7 @@ local function toggleSpam()
 end
 
 -- =========================================================================
--- TEKS RINGAN & ROOT FINDER R&8_DV
+-- TEKS RINGAN & ROOT FINDER
 -- =========================================================================
 local Light = { Orig = setmetatable({}, { __mode = "k" }), Conns = {}, Roots = {}, On = false }
 
@@ -252,7 +252,7 @@ local function lightDisable()
 end
 
 -- =========================================================================
--- LOGIKA SET VISUAL NAME (100% CLIENT - DIPERTAHANKAN)
+-- SET VISUAL NAME (CLIENT)
 -- =========================================================================
 local VN = {
     Orig = nil,
@@ -393,18 +393,7 @@ task.spawn(function()
 end)
 
 -- =========================================================================
--- LOGIKA SET CLOTHES (DUAL-METHOD VISUAL + EFEK + 2x TAP PAKAI + 1x TAP LEPAS)
---  * Katalog Clothes: Kartu & Ikon diperbesar (rowH=68, icon=52x52), 2x Tap untuk pakai.
---  * Search Bar berada tepat di atas daftar pakaian.
---  * Panel "Item Dipakai Saat Ini" berada di kolom vertikal (1 row ke bawah) di
---    samping kanan katalog (1x Tap langsung copot).
---  * Dual-Method Apply:
---      Method 1 (Hybrid onWear + Upvalue): Memanggil `Game.onWear(visTbl)` saat
---                `Net.wear.send` di-spoof sehingga semua sprite karakter, aura,
---                animasi sayap, dan efek item 100% aktif di layar!
---      Method 2 (Direct Worn Table + State.effectsChanged + PlayerSprite):
---                Memodifikasi langsung tabel `Worn` di memori GC dan me-refresh
---                `State.effects` + `Game.refresh`.
+-- SET CLOTHES (CORE)
 -- =========================================================================
 local SC = {
     DB = nil,
@@ -537,9 +526,7 @@ local function scFindWorn()
     return nil, "Tabel pakaian belum ditemukan (pastikan sudah masuk ke dalam world)"
 end
 
--- =========================================================================
--- IKON ITEM: MEMAKAI MODUL ASLI GAME (ItemIcon.new / ItemIcon.set)
--- =========================================================================
+-- IKON ITEM (modul asli game)
 local function scAtlasUrl(atlasName)
     if type(atlasName) ~= "string" then return nil end
     local A = SC.Assets and SC.Assets.Atlas
@@ -582,7 +569,10 @@ local function scSetIcon(icon, id)
     if not icon then return end
     local II = SC.ItemIcon
     if type(II) == "table" and type(II.set) == "function" then
-        if pcall(II.set, icon, id) then return end
+        if pcall(II.set, icon, id) then
+            if icon.frame then icon.frame.Visible = true end
+            return
+        end
     end
     local it = SC.DB and SC.DB[id]
     local url = it and scAtlasUrl(it.atlas)
@@ -654,7 +644,6 @@ local function scBuildItems()
                 items[#items + 1] = entry
                 itemMap[id] = entry
             elseif not isCloth and not isSeed then
-                -- Filter Block Only untuk Auto Farm
                 local isBlock = (it.kind == "block" or it.kind == "fg" or it.kind == "bg"
                     or (type(SC.BlocksDB) == "table" and SC.BlocksDB[id] ~= nil)
                     or it.hits ~= nil or it.breakHits ~= nil or it.hp ~= nil or it.hardness ~= nil
@@ -703,7 +692,7 @@ local function scBuildItems()
 end
 
 -- =========================================================================
--- ANTI-DETECTION & PACKET TRAFFIC GUARD (WEAR, MOVE, STATE)
+-- ANTI-DETECTION & PACKET TRAFFIC GUARD (tidak diubah)
 -- =========================================================================
 local AD = {
     Enabled = true,
@@ -858,11 +847,6 @@ local function scUnhook()
     SC.WearTbl, SC.OrigWear, SC.MoveTbl, SC.OrigMove, SC.Hold = nil, nil, nil, nil, nil
 end
 
--- Dual-Method Character Visual & Effect Redraw:
--- Method 1: Panggil `Game.onWear(W)` + `State.effectsChanged(prevFx)` sehingga
---           semua modul efek (AuraFx, WornPet, VoidKatana, BlackholeKatana, DoubleJump, Speed)
---           dan sprite karakter di-rebuild penuh oleh engine game.
--- Method 2: Panggil `Game.refresh()` + `PlayerSprite` + update upvalue `Worn` secara langsung.
 local function scForceCharacterRedraw(prevFx)
     local W = SC.Worn
     if not W then return end
@@ -870,18 +854,15 @@ local function scForceCharacterRedraw(prevFx)
     local G = SC.State
     local method = SC.ApplyMethod or "Dual Method (onWear + Direct GC)"
 
-    -- Method 1: Trigger onWear callback internal (paket keluar sudah ditahan oleh scHook)
     if (method == "Dual Method (onWear + Direct GC)" or method == "Method 1: Client onWear Callback") and SC.Game then
         if type(SC.Game.onWear) == "function" then
             local snapshot = {}
             for k, v in pairs(W) do snapshot[k] = v end
             pcall(SC.Game.onWear, snapshot)
-            -- Pastikan isi W tetap sinkron dengan snapshot visual
             for k, v in pairs(snapshot) do W[k] = v end
         end
     end
 
-    -- Method 2: Direct State Effects & Sprite Redraw
     if G then
         if prevFx and type(G.effectsChanged) == "function" then
             pcall(G.effectsChanged, prevFx)
@@ -1046,7 +1027,6 @@ local function scResolve(tok)
     return best
 end
 
--- Lepas 1 slot dari daftar "Item Dipakai Saat Ini" (1x Tap langsung copot)
 local function scRemoveSlot(slotName)
     local worn, err = scFindWorn()
     if not worn then
@@ -1062,7 +1042,6 @@ local function scRemoveSlot(slotName)
     end)
 end
 
--- Pakai / lepas item dari Katalog (Dipanggil saat 2x Tap pada kartu katalog)
 local function scWearOrToggleItem(id)
     local worn, err = scFindWorn()
     if not worn then
@@ -1154,7 +1133,7 @@ local function scReset()
 end
 
 -- =========================================================================
--- HELPER UI: FONT, LIST TER-VIRTUALISASI (SMOOTH), PENCARI ANCHOR
+-- HELPER UI
 -- =========================================================================
 local UIFONT = {
     bold = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.SemiBold, Enum.FontStyle.Normal),
@@ -1304,14 +1283,7 @@ local function findAnchorContainer(text, tries, waitT)
     return nil
 end
 
--- =========================================================================
--- BROWSER CLOTHES REDESIGN:
---  * Search Bar langsung di atas Clothes List.
---  * Katalog Clothes di KIRI (62% lebar) dengan Card & Icon lebih besar
---    (rowH = 68, Icon = 52x52) dan interaksi 2x TAP untuk pakai.
---  * Item Saat Ini Dipakai di KANAN (38% lebar) tersusun 1 ROW KE BAWAH
---    (vertikal scrollable) dengan 1x TAP untuk langsung copot.
--- =========================================================================
+
 local function scMountEmbeddedBrowser()
     task.spawn(function()
         task.wait(0.8)
@@ -1326,7 +1298,7 @@ local function scMountEmbeddedBrowser()
 
         local holder = Instance.new("Frame")
         holder.Name = "R8DV_EmbeddedClothesBrowser"
-        holder.Size = UDim2.new(1, 0, 0, 500)
+        holder.Size = UDim2.new(1, 0, 0, 720)
         holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
         holder.BorderSizePixel = 0
         holder.LayoutOrder = 99
@@ -1334,10 +1306,9 @@ local function scMountEmbeddedBrowser()
         uiCorner(holder, 10)
         uiStroke(holder, Color3.fromRGB(38, 40, 48), 1)
 
-        -- ---------------- BARIS ATAS: SEARCH BAR + INFO FILTER ----------------
+        -- Search bar
         local topSearchFrame = Instance.new("Frame")
-        topSearchFrame.Name = "TopSearchBar"
-        topSearchFrame.Size = UDim2.new(1, -20, 0, 38)
+        topSearchFrame.Size = UDim2.new(1, -20, 0, 40)
         topSearchFrame.Position = UDim2.new(0, 10, 0, 10)
         topSearchFrame.BackgroundColor3 = Color3.fromRGB(22, 24, 31)
         topSearchFrame.BorderSizePixel = 0
@@ -1345,17 +1316,12 @@ local function scMountEmbeddedBrowser()
         uiCorner(topSearchFrame, 8)
         uiStroke(topSearchFrame, Color3.fromRGB(48, 52, 64), 1)
 
-        local searchIconLbl = uiLabel(topSearchFrame, "🔍", 13, Color3.fromRGB(150, 160, 180), UIFONT.bold, Enum.TextXAlignment.Center)
-        searchIconLbl.Size = UDim2.new(0, 32, 1, 0)
-        searchIconLbl.Position = UDim2.new(0, 4, 0, 0)
-
         local searchBox = Instance.new("TextBox")
-        searchBox.Name = "SearchInputBox"
-        searchBox.Size = UDim2.new(1, -150, 1, -8)
-        searchBox.Position = UDim2.new(0, 36, 0, 4)
+        searchBox.Size = UDim2.new(1, -120, 1, -8)
+        searchBox.Position = UDim2.new(0, 12, 0, 4)
         searchBox.BackgroundTransparency = 1
         searchBox.ClearTextOnFocus = false
-        searchBox.PlaceholderText = "Cari nama pakaian, ID item, slot (mask, head, wing), atau asset ID..."
+        searchBox.PlaceholderText = "Cari nama, ID, slot, atau asset ID..."
         searchBox.PlaceholderColor3 = Color3.fromRGB(115, 120, 135)
         searchBox.Text = SC.SearchQuery or ""
         searchBox.TextSize = 12
@@ -1365,8 +1331,8 @@ local function scMountEmbeddedBrowser()
         searchBox.Parent = topSearchFrame
 
         local clearSearchBtn = Instance.new("TextButton")
-        clearSearchBtn.Size = UDim2.new(0, 98, 0, 26)
-        clearSearchBtn.Position = UDim2.new(1, -104, 0.5, -13)
+        clearSearchBtn.Size = UDim2.new(0, 98, 0, 28)
+        clearSearchBtn.Position = UDim2.new(1, -104, 0.5, -14)
         clearSearchBtn.BackgroundColor3 = Color3.fromRGB(34, 37, 48)
         clearSearchBtn.AutoButtonColor = false
         clearSearchBtn.TextSize = 10
@@ -1376,183 +1342,11 @@ local function scMountEmbeddedBrowser()
         clearSearchBtn.Parent = topSearchFrame
         uiCorner(clearSearchBtn, 6)
 
-        local countLabel = uiLabel(holder, "Memuat katalog pakaian...", 11, Color3.fromRGB(155, 160, 175), UIFONT.med)
-        countLabel.Size = UDim2.new(0.61, -14, 0, 20)
+        local countLabel = uiLabel(holder, "Memuat katalog...", 11, Color3.fromRGB(155, 160, 175), UIFONT.med)
+        countLabel.Size = UDim2.new(1, -24, 0, 18)
         countLabel.Position = UDim2.new(0, 12, 0, 54)
 
-        -- ---------------- KOLOM KANAN: ITEM SAAT INI DIPAKAI (1 ROW KE BAWAH) ----------------
-        local wornPanel = Instance.new("Frame")
-        wornPanel.Name = "WornRightColumn"
-        wornPanel.Size = UDim2.new(0.38, -14, 1, -64)
-        wornPanel.Position = UDim2.new(0.62, 4, 0, 54)
-        wornPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-        wornPanel.BorderSizePixel = 0
-        wornPanel.Parent = holder
-        uiCorner(wornPanel, 8)
-        uiStroke(wornPanel, Color3.fromRGB(44, 48, 58), 1)
-
-        local wornHeader = Instance.new("Frame")
-        wornHeader.Size = UDim2.new(1, -12, 0, 54)
-        wornHeader.Position = UDim2.new(0, 6, 0, 6)
-        wornHeader.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
-        wornHeader.BorderSizePixel = 0
-        wornHeader.Parent = wornPanel
-        uiCorner(wornHeader, 6)
-
-        local statusDot = Instance.new("Frame")
-        statusDot.Size = UDim2.new(0, 8, 0, 8)
-        statusDot.Position = UDim2.new(0, 8, 0, 10)
-        statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
-        statusDot.BorderSizePixel = 0
-        statusDot.Parent = wornHeader
-        uiCorner(statusDot, 99)
-
-        local wornTitle = uiLabel(wornHeader, "ITEM DIPAKAI (0)", 11, Color3.fromRGB(230, 235, 245), UIFONT.bold)
-        wornTitle.Size = UDim2.new(1, -24, 0, 16)
-        wornTitle.Position = UDim2.new(0, 20, 0, 5)
-
-        local wornSub = uiLabel(wornHeader, "1x Tap = Copot Item", 10, Color3.fromRGB(145, 185, 255), UIFONT.reg)
-        wornSub.Size = UDim2.new(0.52, -8, 0, 16)
-        wornSub.Position = UDim2.new(0, 8, 0, 28)
-
-        local unwearBtn = Instance.new("TextButton")
-        unwearBtn.Name = "UnwearAllBtn"
-        unwearBtn.Size = UDim2.new(0.46, -6, 0, 22)
-        unwearBtn.Position = UDim2.new(0.54, 0, 0, 26)
-        unwearBtn.BackgroundColor3 = Color3.fromRGB(52, 22, 28)
-        unwearBtn.AutoButtonColor = false
-        unwearBtn.TextSize = 9
-        unwearBtn.TextColor3 = Color3.fromRGB(255, 120, 130)
-        unwearBtn.Text = "× UNWEAR ALL"
-        lockFont(unwearBtn, UIFONT.bold)
-        unwearBtn.Parent = wornHeader
-        uiCorner(unwearBtn, 5)
-        uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
-        unwearBtn.Activated:Connect(function() scUnwearAll() end)
-
-        -- Vertical Scroll 1-Row-Ke-Bawah untuk Item yang Sedang Dipakai
-        local wornScroll = Instance.new("ScrollingFrame")
-        wornScroll.Name = "WornVerticalScroll"
-        wornScroll.Size = UDim2.new(1, -12, 1, -68)
-        wornScroll.Position = UDim2.new(0, 6, 0, 64)
-        wornScroll.BackgroundTransparency = 1
-        wornScroll.BorderSizePixel = 0
-        wornScroll.ScrollBarThickness = 4
-        wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
-        wornScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-        wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        wornScroll.CanvasSize = UDim2.new()
-        wornScroll.Parent = wornPanel
-
-        local wornLayout = Instance.new("UIListLayout")
-        wornLayout.FillDirection = Enum.FillDirection.Vertical
-        wornLayout.Padding = UDim.new(0, 6)
-        wornLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        wornLayout.Parent = wornScroll
-
-        local vlist
-
-        local function refreshWornColumn()
-            for _, ch in ipairs(wornScroll:GetChildren()) do
-                if ch:IsA("GuiObject") then ch:Destroy() end
-            end
-
-            local W = SC.Worn or scFindWorn()
-            if not W or not SC.DB then
-                statusDot.BackgroundColor3 = Color3.fromRGB(240, 170, 60)
-                wornTitle.Text = "BELUM TERHUBUNG"
-                local emptyBox = Instance.new("Frame")
-                emptyBox.Size = UDim2.new(1, -4, 0, 56)
-                emptyBox.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
-                emptyBox.BorderSizePixel = 0
-                emptyBox.Parent = wornScroll
-                uiCorner(emptyBox, 6)
-                local l = uiLabel(emptyBox, "Masuk ke World dulu\nagar pakaian terbaca.", 10, Color3.fromRGB(150, 155, 170), UIFONT.reg, Enum.TextXAlignment.Center)
-                l.Size = UDim2.new(1, -10, 1, 0)
-                l.Position = UDim2.new(0, 5, 0, 0)
-                l.TextWrapped = true
-                return
-            end
-
-            local entries = {}
-            for slot, id in pairs(W) do
-                local dbIt = SC.DB[id]
-                if dbIt then
-                    entries[#entries + 1] = { slot = slot, id = id, name = dbIt.name or ("Item #" .. tostring(id)) }
-                end
-            end
-            table.sort(entries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
-
-            if #entries == 0 then
-                statusDot.BackgroundColor3 = Color3.fromRGB(120, 125, 140)
-                wornTitle.Text = "ITEM DIPAKAI (0)"
-                local emptyBox = Instance.new("Frame")
-                emptyBox.Size = UDim2.new(1, -4, 0, 56)
-                emptyBox.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
-                emptyBox.BorderSizePixel = 0
-                emptyBox.Parent = wornScroll
-                uiCorner(emptyBox, 6)
-                local l = uiLabel(emptyBox, "Belum ada item dipakai.\nTap 2x item di kiri.", 10, Color3.fromRGB(145, 150, 165), UIFONT.reg, Enum.TextXAlignment.Center)
-                l.Size = UDim2.new(1, -10, 1, 0)
-                l.Position = UDim2.new(0, 5, 0, 0)
-                l.TextWrapped = true
-                return
-            end
-
-            statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
-            wornTitle.Text = string.format("ITEM DIPAKAI (%d)", #entries)
-
-            for _, e in ipairs(entries) do
-                local isVis = SC.Ov[e.slot] ~= nil
-
-                local rowCard = Instance.new("TextButton")
-                rowCard.Name = "WornRow_" .. tostring(e.slot)
-                rowCard.Size = UDim2.new(1, -4, 0, 54)
-                rowCard.BackgroundColor3 = isVis and Color3.fromRGB(24, 36, 52) or Color3.fromRGB(26, 28, 36)
-                rowCard.AutoButtonColor = false
-                rowCard.Text = ""
-                rowCard.Parent = wornScroll
-                uiCorner(rowCard, 7)
-                local cs = uiStroke(rowCard, isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64), 1)
-
-                local iconHolder = Instance.new("Frame")
-                iconHolder.Size = UDim2.new(0, 42, 0, 42)
-                iconHolder.Position = UDim2.new(0, 6, 0.5, -21)
-                iconHolder.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
-                iconHolder.BorderSizePixel = 0
-                iconHolder.Parent = rowCard
-                uiCorner(iconHolder, 6)
-                scSetIcon(scMakeIcon(iconHolder, 3), e.id)
-
-                local nameLbl = uiLabel(rowCard, e.name, 11, Color3.fromRGB(242, 244, 250), UIFONT.bold)
-                nameLbl.Size = UDim2.new(1, -80, 0, 18)
-                nameLbl.Position = UDim2.new(0, 54, 0, 8)
-
-                local slotLbl = uiLabel(rowCard, string.format("[%s] #%d", tostring(e.slot):upper(), e.id), 10,
-                    isVis and Color3.fromRGB(115, 185, 255) or Color3.fromRGB(150, 155, 170), UIFONT.reg)
-                slotLbl.Size = UDim2.new(1, -80, 0, 16)
-                slotLbl.Position = UDim2.new(0, 54, 0, 27)
-
-                local closeBadge = uiLabel(rowCard, "×", 12, Color3.fromRGB(255, 110, 120), UIFONT.bold, Enum.TextXAlignment.Center)
-                closeBadge.Size = UDim2.new(0, 20, 0, 20)
-                closeBadge.Position = UDim2.new(1, -25, 0.5, -10)
-                closeBadge.BackgroundTransparency = 0
-                closeBadge.BackgroundColor3 = Color3.fromRGB(48, 28, 34)
-                uiCorner(closeBadge, 5)
-
-                rowCard.MouseEnter:Connect(function() cs.Color = Color3.fromRGB(235, 80, 90) end)
-                rowCard.MouseLeave:Connect(function()
-                    cs.Color = isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64)
-                end)
-
-                -- 1x Tap pada daftar Item Dipakai langsung melepas item tersebut
-                rowCard.Activated:Connect(function()
-                    scRemoveSlot(e.slot)
-                end)
-            end
-        end
-
-        -- ---------------- KOLOM KIRI: KATALOG CLOTHES (BESAR + 2x TAP PAKAI) ----------------
+        -- Katalog (lebar penuh, tinggi 330)
         local function makeClothRow(scroll)
             local row = {}
             local card = Instance.new("TextButton")
@@ -1566,7 +1360,6 @@ local function scMountEmbeddedBrowser()
             row.card = card
             row.stroke = uiStroke(card, Color3.fromRGB(38, 42, 52), 1)
 
-            -- Ikon diperbesar menjadi 52x52
             local iconBg = Instance.new("Frame")
             iconBg.Size = UDim2.new(0, 52, 0, 52)
             iconBg.Position = UDim2.new(0, 8, 0.5, -26)
@@ -1574,43 +1367,38 @@ local function scMountEmbeddedBrowser()
             iconBg.BorderSizePixel = 0
             iconBg.Parent = card
             uiCorner(iconBg, 7)
-            uiStroke(iconBg, Color3.fromRGB(36, 40, 50), 1)
             row.icon = scMakeIcon(iconBg, 3)
 
             row.title = uiLabel(card, "", 13, Color3.fromRGB(244, 246, 252), UIFONT.bold)
-            row.title.Size = UDim2.new(1, -158, 0, 22)
+            row.title.Size = UDim2.new(1, -170, 0, 22)
             row.title.Position = UDim2.new(0, 68, 0, 10)
 
             row.sub = uiLabel(card, "", 10, Color3.fromRGB(148, 155, 172), UIFONT.reg)
-            row.sub.Size = UDim2.new(1, -158, 0, 18)
+            row.sub.Size = UDim2.new(1, -170, 0, 18)
             row.sub.Position = UDim2.new(0, 68, 0, 34)
 
             local badge = uiLabel(card, "", 10, Color3.fromRGB(185, 190, 205), UIFONT.bold, Enum.TextXAlignment.Center)
-            badge.Size = UDim2.new(0, 80, 0, 26)
-            badge.Position = UDim2.new(1, -88, 0.5, -13)
+            badge.Size = UDim2.new(0, 84, 0, 26)
+            badge.Position = UDim2.new(1, -92, 0.5, -13)
             badge.BackgroundTransparency = 0
             uiCorner(badge, 6)
             row.badge = badge
 
-            -- 2x Tap untuk memakai / melepas dari katalog
             card.Activated:Connect(function()
                 local item = row.item
                 if not item then return end
                 local now = os.clock()
                 if SC.LastTapId == item.id and (now - SC.LastTapTime) <= 0.48 then
-                    SC.LastTapId = nil
-                    SC.LastTapTime = 0
+                    SC.LastTapId, SC.LastTapTime = nil, 0
                     scWearOrToggleItem(item.id)
                 else
-                    SC.LastTapId = item.id
-                    SC.LastTapTime = now
+                    SC.LastTapId, SC.LastTapTime = item.id, now
                     badge.Text = "TAP LAGI!"
                     badge.BackgroundColor3 = Color3.fromRGB(55, 115, 215)
                     badge.TextColor3 = Color3.fromRGB(255, 255, 255)
                     task.delay(0.5, function()
                         if row.item == item and SC.LastTapId == item.id then
-                            local curW = SC.Worn or {}
-                            local eq = (curW[item.slot] == item.id)
+                            local eq = ((SC.Worn or {})[item.slot] == item.id)
                             badge.Text = eq and "DIPAKAI ✓" or "2x TAP"
                             badge.BackgroundColor3 = eq and Color3.fromRGB(40, 145, 85) or Color3.fromRGB(30, 33, 42)
                             badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
@@ -1622,8 +1410,7 @@ local function scMountEmbeddedBrowser()
         end
 
         local function bindClothRow(row, item)
-            local W = SC.Worn or {}
-            local eq = (W[item.slot] == item.id)
+            local eq = ((SC.Worn or {})[item.slot] == item.id)
             row.card.BackgroundColor3 = eq and Color3.fromRGB(20, 44, 34) or Color3.fromRGB(20, 22, 28)
             row.stroke.Color = eq and Color3.fromRGB(60, 185, 115) or Color3.fromRGB(38, 42, 52)
             if row.iconId ~= item.id then
@@ -1638,16 +1425,131 @@ local function scMountEmbeddedBrowser()
             row.badge.TextColor3 = eq and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(185, 190, 205)
         end
 
-        vlist = newVList(holder, {
+        local vlist = newVList(holder, {
             name = "ClothesListScroll",
-            rowH = 68, -- Card diperbesar
-            gap = 7,
-            pad = 8,
-            size = UDim2.new(0.62, -14, 1, -86),
+            rowH = 68, gap = 7, pad = 8,
+            size = UDim2.new(1, -20, 0, 330),
             position = UDim2.new(0, 10, 0, 76),
             makeRow = makeClothRow,
             bind = bindClothRow,
         })
+
+        -- Item dipakai: di BAWAH katalog, berupa grid kotak
+        local wornPanel = Instance.new("Frame")
+        wornPanel.Name = "WornBottomPanel"
+        wornPanel.Size = UDim2.new(1, -20, 0, 290)
+        wornPanel.Position = UDim2.new(0, 10, 0, 418)
+        wornPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+        wornPanel.BorderSizePixel = 0
+        wornPanel.Parent = holder
+        uiCorner(wornPanel, 8)
+        uiStroke(wornPanel, Color3.fromRGB(44, 48, 58), 1)
+
+        local statusDot = Instance.new("Frame")
+        statusDot.Size = UDim2.new(0, 8, 0, 8)
+        statusDot.Position = UDim2.new(0, 12, 0, 16)
+        statusDot.BackgroundColor3 = Color3.fromRGB(72, 199, 142)
+        statusDot.BorderSizePixel = 0
+        statusDot.Parent = wornPanel
+        uiCorner(statusDot, 99)
+
+        local wornTitle = uiLabel(wornPanel, "ITEM DIPAKAI (0)", 12, Color3.fromRGB(230, 235, 245), UIFONT.bold)
+        wornTitle.Size = UDim2.new(1, -180, 0, 18)
+        wornTitle.Position = UDim2.new(0, 28, 0, 11)
+
+        local wornSub = uiLabel(wornPanel, "1x tap pada kotak = copot", 10, Color3.fromRGB(145, 185, 255), UIFONT.reg)
+        wornSub.Size = UDim2.new(1, -180, 0, 14)
+        wornSub.Position = UDim2.new(0, 28, 0, 29)
+
+        local unwearBtn = Instance.new("TextButton")
+        unwearBtn.Size = UDim2.new(0, 124, 0, 28)
+        unwearBtn.Position = UDim2.new(1, -132, 0, 10)
+        unwearBtn.BackgroundColor3 = Color3.fromRGB(52, 22, 28)
+        unwearBtn.AutoButtonColor = false
+        unwearBtn.TextSize = 10
+        unwearBtn.TextColor3 = Color3.fromRGB(255, 120, 130)
+        unwearBtn.Text = "× UNWEAR ALL"
+        lockFont(unwearBtn, UIFONT.bold)
+        unwearBtn.Parent = wornPanel
+        uiCorner(unwearBtn, 6)
+        uiStroke(unwearBtn, Color3.fromRGB(165, 55, 65), 1)
+        unwearBtn.Activated:Connect(function() scUnwearAll() end)
+
+        local wornScroll = Instance.new("ScrollingFrame")
+        wornScroll.Size = UDim2.new(1, -16, 1, -56)
+        wornScroll.Position = UDim2.new(0, 8, 0, 48)
+        wornScroll.BackgroundTransparency = 1
+        wornScroll.BorderSizePixel = 0
+        wornScroll.ScrollBarThickness = 4
+        wornScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 95, 110)
+        wornScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+        wornScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        wornScroll.CanvasSize = UDim2.new()
+        wornScroll.Parent = wornPanel
+
+        local wornGrid = Instance.new("UIGridLayout")
+        wornGrid.CellSize = UDim2.fromOffset(92, 104)
+        wornGrid.CellPadding = UDim2.fromOffset(8, 8)
+        wornGrid.SortOrder = Enum.SortOrder.LayoutOrder
+        wornGrid.Parent = wornScroll
+
+        local function refreshWornColumn()
+            for _, ch in ipairs(wornScroll:GetChildren()) do
+                if ch:IsA("GuiObject") then ch:Destroy() end
+            end
+            local W = SC.Worn or scFindWorn()
+            if not W or not SC.DB then
+                statusDot.BackgroundColor3 = Color3.fromRGB(240, 170, 60)
+                wornTitle.Text = "BELUM TERHUBUNG (masuk World dulu)"
+                return
+            end
+            local entries = {}
+            for slot, id in pairs(W) do
+                local dbIt = SC.DB[id]
+                if dbIt then
+                    entries[#entries + 1] = { slot = slot, id = id, name = dbIt.name or ("Item #" .. tostring(id)) }
+                end
+            end
+            table.sort(entries, function(a, b) return tostring(a.slot) < tostring(b.slot) end)
+            statusDot.BackgroundColor3 = #entries > 0 and Color3.fromRGB(72, 199, 142) or Color3.fromRGB(120, 125, 140)
+            wornTitle.Text = string.format("ITEM DIPAKAI (%d)", #entries)
+
+            for i, e in ipairs(entries) do
+                local isVis = SC.Ov[e.slot] ~= nil
+                local tile = Instance.new("TextButton")
+                tile.LayoutOrder = i
+                tile.BackgroundColor3 = isVis and Color3.fromRGB(24, 36, 52) or Color3.fromRGB(26, 28, 36)
+                tile.AutoButtonColor = false
+                tile.Text = ""
+                tile.Parent = wornScroll
+                uiCorner(tile, 8)
+                local cs = uiStroke(tile, isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64), 1)
+
+                local iconHolder = Instance.new("Frame")
+                iconHolder.Size = UDim2.new(0, 60, 0, 60)
+                iconHolder.Position = UDim2.new(0.5, -30, 0, 8)
+                iconHolder.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+                iconHolder.BorderSizePixel = 0
+                iconHolder.Parent = tile
+                uiCorner(iconHolder, 7)
+                scSetIcon(scMakeIcon(iconHolder, 3), e.id)
+
+                local nameLbl = uiLabel(tile, e.name, 10, Color3.fromRGB(242, 244, 250), UIFONT.bold, Enum.TextXAlignment.Center)
+                nameLbl.Size = UDim2.new(1, -8, 0, 14)
+                nameLbl.Position = UDim2.new(0, 4, 0, 72)
+
+                local slotLbl = uiLabel(tile, tostring(e.slot):upper(), 9,
+                    isVis and Color3.fromRGB(115, 185, 255) or Color3.fromRGB(150, 155, 170), UIFONT.reg, Enum.TextXAlignment.Center)
+                slotLbl.Size = UDim2.new(1, -8, 0, 12)
+                slotLbl.Position = UDim2.new(0, 4, 0, 87)
+
+                tile.MouseEnter:Connect(function() cs.Color = Color3.fromRGB(235, 80, 90) end)
+                tile.MouseLeave:Connect(function()
+                    cs.Color = isVis and Color3.fromRGB(65, 140, 230) or Color3.fromRGB(48, 52, 64)
+                end)
+                tile.Activated:Connect(function() scRemoveSlot(e.slot) end)
+            end
+        end
 
         local function applyFilter(toTop)
             if not scBuildItems() then
@@ -1657,7 +1559,6 @@ local function scMountEmbeddedBrowser()
             local words = {}
             for w in string.gmatch(vnTrim(SC.SearchQuery):lower(), "%S+") do words[#words + 1] = w end
             local slotFilter = (SC.SelectedSlot or "All"):lower()
-
             local out = {}
             for _, item in ipairs(SC.Items) do
                 if slotFilter == "all" or item.slot == slotFilter then
@@ -1675,7 +1576,7 @@ local function scMountEmbeddedBrowser()
                     if ok then out[#out + 1] = item end
                 end
             end
-            countLabel.Text = string.format("KATALOG (%d ITEM)  •  FILTER: %s  •  2x TAP UNTUK PAKAI",
+            countLabel.Text = string.format("KATALOG %d ITEM  •  FILTER: %s  •  2x TAP = PAKAI",
                 #out, (SC.SelectedSlot or "All"):upper())
             vlist:SetData(out, toTop)
         end
@@ -1706,14 +1607,14 @@ local function scMountEmbeddedBrowser()
 
         SC.RefreshWornBarFn = refreshAll
         SC.UpdateUIFn = refreshAll
-
         refreshWornColumn()
         applyFilter(true)
     end)
 end
 
+
 -- =========================================================================
--- LOGIKA CHECK MODERATOR + ANTI-SPAM NOTIF + AUTO ACTION (EXIT/DIEM)
+-- CHECK MODERATOR
 -- =========================================================================
 local ModSys = {
     RolesModule = nil,
@@ -1850,11 +1751,7 @@ local function setFreezeState(freezeOn)
 end
 
 -- =========================================================================
--- ESP JARING (SPIDERWEB VISUAL CLIENT) & DAFTAR PLAYER (TANPA TOMBOL GO CRASH)
---  * Menghapus semua teks/notif "posisi tidak dikirim server".
---  * Menghapus tombol GO yang bisa menyebabkan crash.
---  * Menggambar Jaring Visual (Spiderweb): garis utama dari posisi kita ke
---    setiap target + jaring penghubung antar target (web mesh) + node cincin.
+-- ESP JARING (SPIDERWEB) - garis langsung ke badan sprite player
 -- =========================================================================
 local ESP = {
     Targets = {},
@@ -1972,7 +1869,6 @@ local function espLayer()
             end
         end
     end
-    -- Fallback cari frame "Tiles" langsung di PlayerGui.GameGui
     local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
     local gg = pg and pg:FindFirstChild("GameGui")
     if gg then
@@ -2004,6 +1900,33 @@ local function espToScreen(x, y)
     local ap = layer.AbsolutePosition
     local px = espPX() * s
     return Vector2.new(ap.X + x * px, ap.Y + y * px)
+end
+
+-- Posisi badan sprite player langsung dari frame sprite game
+local function espBodyScreenPos(entry)
+    if not entry then return nil end
+    local g = entry.group
+    if typeof(g) == "Instance" and g:IsA("GuiObject") and g.Parent then
+        local sz = g.AbsoluteSize
+        if sz.X > 0 or sz.Y > 0 then
+            return g.AbsolutePosition + sz * 0.5
+        end
+    end
+    return nil
+end
+
+local function espHostGui()
+    local E = espEntries()
+    if E then
+        for _, e in pairs(E) do
+            local g = type(e) == "table" and e.group
+            if typeof(g) == "Instance" and g.Parent then
+                local h = g:FindFirstAncestorOfClass("ScreenGui")
+                if h then return h end
+            end
+        end
+    end
+    return ESP.Layer and ESP.Layer:FindFirstAncestorOfClass("ScreenGui")
 end
 
 local function espStatusOf(plr, entry)
@@ -2080,8 +2003,7 @@ local function espEnsureOverlay()
     sg.ResetOnSpawn = false
     sg.DisplayOrder = 9999
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    local layer = ESP.Layer
-    local host = layer and layer:FindFirstAncestorOfClass("ScreenGui")
+    local host = espHostGui()
     sg.IgnoreGuiInset = host and host.IgnoreGuiInset or true
     sg.Parent = parent
     ESP.Overlay = sg
@@ -2197,7 +2119,6 @@ local function espWantedTargets()
     return want
 end
 
--- Render Spiderweb / Jaring ESP (Tanpa notif/label "posisi tidak dikirim server")
 local function espRender()
     if not getValue("ESP_Master", true) then
         if next(ESP.Objs) ~= nil then espClearAll() end
@@ -2215,7 +2136,7 @@ local function espRender()
 
     espLayer()
     local sg = espEnsureOverlay()
-    local hostGui = ESP.Layer and ESP.Layer:FindFirstAncestorOfClass("ScreenGui")
+    local hostGui = espHostGui()
     if hostGui and sg.IgnoreGuiInset ~= hostGui.IgnoreGuiInset then
         sg.IgnoreGuiInset = hostGui.IgnoreGuiInset
     end
@@ -2225,9 +2146,11 @@ local function espRender()
     local showHidden = getValue("ESP_Hidden", true)
 
     local mx, my = espMyPos()
-    local me2D = (mx and espToScreen(mx, my - 0.5)) or Vector2.new(vs.X / 2, vs.Y * 0.5)
+    local myEntry = espEntryOf(LocalPlayer.UserId)
+    local me2D = espBodyScreenPos(myEntry)
+        or (mx and espToScreen(mx, my - 0.5))
+        or Vector2.new(vs.X / 2, vs.Y / 2)
 
-    -- Titik pusat jaring pada posisi karakter kita
     if not ESP.CenterNode or not ESP.CenterNode.Parent then
         local cn = Instance.new("Frame")
         cn.Name = "SpiderWebHub"
@@ -2256,11 +2179,13 @@ local function espRender()
         else color = Color3.fromRGB(75, 225, 255) end
 
         local pos2D
-        if hasPos and entry and type(entry.x) == "number" and type(entry.y) == "number" and (showHidden or not hidden) then
-            pos2D = espToScreen(entry.x, entry.y - 0.5)
+        if showHidden or not hidden then
+            pos2D = espBodyScreenPos(entry)
+            if not pos2D and hasPos and entry and type(entry.x) == "number" and type(entry.y) == "number" then
+                pos2D = espToScreen(entry.x, entry.y - 0.5)
+            end
         end
 
-        -- Jika posisi belum ada, sembunyikan bersih (TIDAK menampilkan teks "posisi tidak dikirim server")
         if not pos2D then
             o.line.Visible = false
             o.node.Visible = false
@@ -2272,7 +2197,6 @@ local function espRender()
                 math.clamp(pos2D.Y, margin, vs.Y - margin)
             )
 
-            -- Garis utama jaring dari kita ke target
             espDrawLine(o.line, me2D, clamped, color, modInfo and 2.2 or 1.5, 0.2)
 
             o.node.BackgroundColor3 = color
@@ -2282,7 +2206,7 @@ local function espRender()
             o.node.Visible = true
 
             local dist = 0
-            if mx and entry then
+            if mx and entry and type(entry.x) == "number" then
                 dist = math.sqrt((entry.x - mx) ^ 2 + (entry.y - my) ^ 2)
             end
             o.lbl.TextColor3 = color
@@ -2294,7 +2218,6 @@ local function espRender()
         end
     end
 
-    -- Gambar benang jaring silang (Spiderweb Mesh) antar target & cincin tengah
     local webIdx = 0
     local nPts = #activeScreenPoints
     ESP.CenterNode.Position = UDim2.fromOffset(me2D.X, me2D.Y)
@@ -2311,7 +2234,6 @@ local function espRender()
             local pA = activeScreenPoints[i].pt
             local pB = activeScreenPoints[(i % nPts) + 1].pt
 
-            -- 1) Benang luar penghubung antar target
             webIdx += 1
             local outerLine = ESP.WebLines[webIdx]
             if not outerLine or not outerLine.Parent then
@@ -2324,7 +2246,6 @@ local function espRender()
             end
             espDrawLine(outerLine, pA, pB, Color3.fromRGB(95, 210, 255), 1, 0.58)
 
-            -- 2) Benang cincin tengah (inner spiderweb ring 45% menuju target)
             local midA = me2D:Lerp(pA, 0.45)
             local midB = me2D:Lerp(pB, 0.45)
             webIdx += 1
@@ -2350,9 +2271,7 @@ RunService.RenderStepped:Connect(function()
     pcall(espRender)
 end)
 
--- ---------------------------------------------------------------------
--- UI LIST PLAYER (EMBEDDED, SCROLLABLE, TANPA TOMBOL GO CRASH)
--- ---------------------------------------------------------------------
+-- Daftar player (embedded)
 local function espMountPlayerList()
     task.spawn(function()
         task.wait(0.6)
@@ -2615,31 +2534,22 @@ task.spawn(function()
     end
 end)
 
+
 -- =========================================================================
--- LOGIKA AUTO FARM (BP BLOCK SELECTOR + 5x5 MATRIX + VERIFIED PLACE/BREAK/COLLECT)
---  * Pilih Block dari BP (Backpack) lengkap dengan gambar ItemIcon + jumlah (Count).
---  * Filter khusus Block (tanpa clothes/seed).
---  * Grid 5x5 Simetris Seimbang: Tengah (0,0) menampilkan Avatar Profile Player,
---    Kanan +1/+2, Kiri -1/-2, Atas +1/+2, Bawah -1/-2.
---  * Verifikasi Cerdas:
---      1. Cek apakah di koordinat tile sudah ada block -> jika sudah ada, SKIP PLACE!
---      2. Saat Break, pukul dan cek apakah block sudah hancur -> jika sudah hancur,
---         SKIP sisa pukulan! Jika belum hancur, jeda sebentar lalu pukul lagi sampai hancur.
---      3. Auto Collect: Teleport otomatis via server (`Net.move` + `G.goTo`) untuk
---         mengambil drop item di sekitar area farm lalu kembali ke titik semula.
+-- LOGIKA AUTO FARM (tanpa teleport; collect hanya kirim paket ambil)
 -- =========================================================================
 local AF = {
     Running = false,
     Button = nil,
     StatusLbl = nil,
     SelectedBlockId = nil,
-    SelectedTiles = { ["1,0"] = { dx = 1, dy = 0 } }, -- default Kanan +1, Y 0
+    SelectedTiles = { ["1,0"] = { dx = 1, dy = 0 } },
     TileOrder = { { dx = 1, dy = 0 } },
     PlaceDelay = 0.18,
     BreakDelay = 0.16,
     CollectDelay = 0.12,
     BreakHits = 4,
-    AutoCollect = true,
+    AutoCollect = false,
     CollectRadius = 4,
     OnlyShowOwnedBP = true,
     Method = "Dual Method (Client + Server Packet)",
@@ -2660,7 +2570,6 @@ local AF_METHODS = {
     "Method 2: Client Game Handler + Packet"
 }
 
--- Baca isi Backpack (BP) dari modul Inventory & GC upvalues
 local function afScanBackpackCounts()
     local counts = {}
     local sh = ReplicatedStorage:FindFirstChild("Shared")
@@ -2686,7 +2595,6 @@ local function afScanBackpackCounts()
         end
     end
 
-    -- 1. Cek dari modul ReplicatedStorage.Shared.Inventory
     local Inv = AF.InvModule
     if type(Inv) == "table" then
         absorbTable(Inv.items or Inv.slots or Inv.bag or Inv.data or Inv.inventory or Inv)
@@ -2709,7 +2617,6 @@ local function afScanBackpackCounts()
         end
     end
 
-    -- 2. Cek dari SC.State / SC.Game di GC
     pcall(scFindWorn)
     for _, rootTbl in ipairs({ SC.State, SC.Game }) do
         if type(rootTbl) == "table" then
@@ -2729,7 +2636,6 @@ local function afScanBackpackCounts()
         end
     end
 
-    -- 3. Fallback baca angka dari GUI InventoryUI jika terbuka/ada di PlayerGui
     local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
     local gg = pg and pg:FindFirstChild("GameGui")
     if gg then
@@ -2758,25 +2664,17 @@ local function afScanBackpackCounts()
     return counts
 end
 
--- Konversi Offset (dx, dy) dari Grid 5x5 ke Koordinat Tile Dunia
--- Sesuai instruksi: Kanan = +1, Kiri = -1, Atas = +1, Bawah = -1
--- Catatan: Di engine 2D tile game, sumbu Y ke atas biasanya bernilai -1 (layar atas = Y berkurang).
--- Kita cek otomatis arah Y dari lantai di bawah kaki player!
+-- Offset grid (dx,dy) -> tile dunia. Atas di grid = tile di atas karakter (y berkurang)
 local function afGetWorldTileFromOffset(myX, myY, dx, dy)
     local baseTx = math.floor(myX + 0.5)
     local baseTy = math.floor(myY + 0.5)
     local yDir = getValue("AF_InvertY", true) and -1 or 1
-    -- Jika InvertY aktif (default), Atas (+1 di UI) mengarah ke atas kepala karakter di world (baseTy - 1)
     return baseTx + dx, baseTy + (dy * yDir)
 end
 
--- =========================================================================
--- VERIFIKASI TILE DUNIA: CEK APAKAH DI KOORDINAT (tx, ty) SUDAH ADA BLOCK
--- =========================================================================
 local function afCheckTileHasBlock(tx, ty)
     pcall(scFindWorn)
 
-    -- 1. Cek lewat fungsi atau tabel dunia di SC.State / SC.Game
     for _, obj in ipairs({ SC.State, SC.Game }) do
         if type(obj) == "table" then
             for _, fnName in ipairs({ "getTile", "tileAt", "getBlock", "blockAt", "fgAt", "getFg", "cellAt" }) do
@@ -2795,7 +2693,6 @@ local function afCheckTileHasBlock(tx, ty)
                 end
             end
 
-            -- Cek tabel 2D / 1D tile map di upvalues Game/State
             for _, tblName in ipairs({ "tiles", "fg", "blocks", "map", "grid", "world" }) do
                 local t = rawget(obj, tblName)
                 if type(t) == "table" then
@@ -2821,7 +2718,6 @@ local function afCheckTileHasBlock(tx, ty)
         end
     end
 
-    -- 2. Cek via Visual Layer "Tiles" di PlayerGui.GameGui (sangat akurat untuk client)
     local layer = espLayer()
     if layer then
         local tilePx = espPX()
@@ -2829,7 +2725,6 @@ local function afCheckTileHasBlock(tx, ty)
         local targetY = ty * tilePx
         for _, ch in ipairs(layer:GetChildren()) do
             if ch:IsA("GuiObject") and ch.Visible then
-                -- Abaikan background murni jika punya nama bg
                 local nm = ch.Name:lower()
                 if not nm:find("^bg") then
                     local cx = ch.Position.X.Offset
@@ -2849,14 +2744,10 @@ local function afCheckTileHasBlock(tx, ty)
     return false, 0
 end
 
--- =========================================================================
--- EKSEKUSI PLACE, BREAK & AUTO COLLECT (DUAL METHOD: CLIENT + SERVER PACKET)
--- =========================================================================
 local function afSendPlace(tx, ty, itemId)
     local Net = scGetNet()
     local method = AF.Method
 
-    -- Method 1: Kirim Paket Place/Tile ke Server
     if Net and (method == "Dual Method (Client + Server Packet)" or method == "Method 1: Server Packet Direct (Net)") then
         for _, k in ipairs({ "place", "tile", "use", "build", "put", "action", "interact" }) do
             local pkt = Net[k]
@@ -2867,7 +2758,6 @@ local function afSendPlace(tx, ty, itemId)
         end
     end
 
-    -- Method 2: Panggil Handler Client Game / State
     if method == "Dual Method (Client + Server Packet)" or method == "Method 2: Client Game Handler + Packet" then
         for _, obj in ipairs({ SC.State, SC.Game }) do
             if type(obj) == "table" then
@@ -2889,9 +2779,8 @@ end
 local function afSendBreak(tx, ty)
     local Net = scGetNet()
     local method = AF.Method
-    local punchId = 18 -- ID Fist / Punch standar
+    local punchId = 18
 
-    -- Method 1: Kirim Paket Punch / Hit / Break ke Server
     if Net and (method == "Dual Method (Client + Server Packet)" or method == "Method 1: Server Packet Direct (Net)") then
         for _, k in ipairs({ "punch", "hit", "break", "breakTile", "damage", "tile", "use", "action" }) do
             local pkt = Net[k]
@@ -2903,7 +2792,6 @@ local function afSendBreak(tx, ty)
         end
     end
 
-    -- Method 2: Panggil Handler Punch / Hit di Client Game / State
     if method == "Dual Method (Client + Server Packet)" or method == "Method 2: Client Game Handler + Packet" then
         for _, obj in ipairs({ SC.State, SC.Game }) do
             if type(obj) == "table" then
@@ -2923,92 +2811,53 @@ local function afSendBreak(tx, ty)
     end
 end
 
--- Teleport halus Client + Server untuk Auto Collect
-local function afTeleportToTile(tx, ty)
-    local Net = scGetNet()
-    local G = SC.State
-    if G and type(G.goTo) == "function" then
-        pcall(G.goTo, tx, ty)
-    end
-    if Net and type(Net.move) == "table" and type(Net.move.send) == "function" then
-        local sendFn = SC.OrigMove or Net.move.send
-        pcall(sendFn, { x = tx, y = ty, vx = 0, vy = 0, flags = 2 })
-    end
-end
-
--- Scan & Collect Drop Items di sekitar karakter / tile target via Server Teleport
-local function afRunAutoCollect(originX, originY, targetPoints)
+-- Auto collect TANPA teleport: karakter tidak pernah dipindah, hanya kirim paket ambil
+local function afRunAutoCollect(originX, originY)
     if not AF.AutoCollect or Spam.PausedByMod then return end
     local Net = scGetNet()
+    if not Net then return end
     local sh = ReplicatedStorage:FindFirstChild("Shared")
     if sh and not AF.DropModule then
         pcall(function() AF.DropModule = require(sh:FindFirstChild("DropBox")) end)
     end
+    if type(AF.DropModule) ~= "table" then return end
 
-    local dropCoords = {}
-
-    -- 1. Kumpulkan koordinat dari DropBox module (jika ada)
-    if type(AF.DropModule) == "table" then
-        for _, v in pairs(AF.DropModule) do
-            if type(v) == "table" then
-                for dk, dv in pairs(v) do
-                    if type(dv) == "table" and type(dv.x) == "number" and type(dv.y) == "number" then
-                        local dist = math.sqrt((dv.x - originX) ^ 2 + (dv.y - originY) ^ 2)
-                        if dist <= (AF.CollectRadius + 1.5) then
-                            dropCoords[#dropCoords + 1] = { x = dv.x, y = dv.y, uid = dv.id or dv.uid or dk }
-                        end
-                    end
-                end
-            elseif type(v) == "function" and type(debug) == "table" and type(debug.getupvalues) == "function" then
-                local okU, ups = pcall(debug.getupvalues, v)
-                if okU and type(ups) == "table" then
-                    for _, up in pairs(ups) do
-                        if type(up) == "table" then
-                            for dk, dv in pairs(up) do
-                                if type(dv) == "table" and type(dv.x) == "number" and type(dv.y) == "number" then
-                                    local dist = math.sqrt((dv.x - originX) ^ 2 + (dv.y - originY) ^ 2)
-                                    if dist <= (AF.CollectRadius + 1.5) then
-                                        dropCoords[#dropCoords + 1] = { x = dv.x, y = dv.y, uid = dv.id or dv.uid or dk }
-                                    end
-                                end
-                            end
-                        end
-                    end
+    local drops = {}
+    local function scan(t)
+        for dk, dv in pairs(t) do
+            if type(dv) == "table" and type(dv.x) == "number" and type(dv.y) == "number" then
+                local d = math.sqrt((dv.x - originX) ^ 2 + (dv.y - originY) ^ 2)
+                if d <= AF.CollectRadius then
+                    drops[#drops + 1] = { x = dv.x, y = dv.y, uid = dv.id or dv.uid or dk }
                 end
             end
         end
     end
-
-    -- 2. Tambah semua titik tile yang baru saja dihancurkan agar pasti ter-pickup server
-    for _, pt in ipairs(targetPoints or {}) do
-        dropCoords[#dropCoords + 1] = { x = pt.tx, y = pt.ty, uid = nil }
+    for _, v in pairs(AF.DropModule) do
+        if type(v) == "table" then
+            scan(v)
+        elseif type(v) == "function" and type(debug) == "table" and type(debug.getupvalues) == "function" then
+            local okU, ups = pcall(debug.getupvalues, v)
+            if okU and type(ups) == "table" then
+                for _, up in pairs(ups) do if type(up) == "table" then scan(up) end end
+            end
+        end
     end
 
-    for _, d in ipairs(dropCoords) do
+    for _, d in ipairs(drops) do
         if not AF.Running or Spam.PausedByMod then break end
-        afTeleportToTile(d.x, d.y)
-        if Net then
-            for _, k in ipairs({ "collect", "pickup", "takeDrop", "dropCollect", "touchDrop" }) do
-                local pkt = Net[k]
-                if type(pkt) == "table" and type(pkt.send) == "function" then
-                    if d.uid then pcall(pkt.send, d.uid); pcall(pkt.send, { id = d.uid, x = d.x, y = d.y }) end
-                    pcall(pkt.send, { x = d.x, y = d.y })
-                end
+        for _, k in ipairs({ "collect", "pickup", "takeDrop", "dropCollect" }) do
+            local pkt = Net[k]
+            if type(pkt) == "table" and type(pkt.send) == "function" then
+                pcall(pkt.send, d.uid)
+                pcall(pkt.send, { id = d.uid, x = d.x, y = d.y })
             end
         end
         AF.CollectedCount += 1
         task.wait(math.max(AF.CollectDelay, 0.04))
     end
-
-    -- Kembalikan posisi karakter ke titik asal sebelum collect
-    if originX and originY then
-        afTeleportToTile(originX, originY)
-    end
 end
 
--- =========================================================================
--- LOOP UTAMA AUTO FARM DENGAN VERIFIKASI PLACE & BREAK
--- =========================================================================
 local function afUpdateButtonAndStatus(statusText)
     if AF.Button then
         local txt = AF.Running and "STOP FARM" or "START FARM"
@@ -3024,7 +2873,7 @@ end
 
 local function afStop(reason)
     AF.Running = false
-    afUpdateButtonAndStatus("⏹ STATUS: Berhenti (" .. tostring(reason or "Manual") .. ")")
+    afUpdateButtonAndStatus("⏹ Berhenti (" .. tostring(reason or "Manual") .. ")")
 end
 
 local function afStart()
@@ -3032,7 +2881,7 @@ local function afStart()
     scBuildItems()
 
     if not AF.SelectedBlockId or not SC.DB or not SC.DB[AF.SelectedBlockId] then
-        notifyClient("Auto Farm", "Pilih Block terlebih dahulu dari daftar BP di bawah!", 4)
+        notifyClient("Auto Farm", "Pilih Block terlebih dahulu dari daftar BP!", 4)
         return
     end
     if #AF.TileOrder == 0 then
@@ -3048,7 +2897,7 @@ local function afStart()
     task.spawn(function()
         while AF.Running do
             if Spam.PausedByMod then
-                afUpdateButtonAndStatus("⏸ PAUSED: Menunggu Moderator keluar dari World...")
+                afUpdateButtonAndStatus("⏸ PAUSED: Menunggu Moderator keluar...")
                 task.wait(0.5)
             else
                 local mx, my = espMyPos()
@@ -3064,28 +2913,17 @@ local function afStart()
                         local tx, ty = afGetWorldTileFromOffset(originX, originY, offset.dx, offset.dy)
                         activeTargets[#activeTargets + 1] = { tx = tx, ty = ty, dx = offset.dx, dy = offset.dy }
 
-                        -- =====================================================
-                        -- TAHAP 1: VERIFIKASI PLACE
-                        -- Cek apakah di atas tile (tx, ty) sudah ada block.
-                        -- Kalau sudah ada block, langsung SKIP PLACE!
-                        -- =====================================================
                         local alreadyHasBlock = afCheckTileHasBlock(tx, ty)
                         if alreadyHasBlock then
                             afUpdateButtonAndStatus(string.format("⏭ Tile (%+d,%+d) sudah ada block -> Skip Place", offset.dx, offset.dy))
                         else
-                            afUpdateButtonAndStatus(string.format("🧱 Place %s di Tile (%+d,%+d) [%d,%d]", blockName, offset.dx, offset.dy, tx, ty))
+                            afUpdateButtonAndStatus(string.format("🧱 Place %s di Tile (%+d,%+d)", blockName, offset.dx, offset.dy))
                             afSendPlace(tx, ty, AF.SelectedBlockId)
                             AF.PlacedCount += 1
                             task.wait(math.max(AF.PlaceDelay, 0.05))
                         end
                     end
 
-                    -- =========================================================
-                    -- TAHAP 2: VERIFIKASI BREAK (PUKUL SAMPAI HANCUR)
-                    -- Cek setiap pukulan: jika block sudah hancur, langsung SKIP!
-                    -- Jika setelah full hit masih belum hancur, jeda sebentar lalu
-                    -- pukul tambahan sampai benar-benar terverifikasi hancur.
-                    -- =========================================================
                     for _, tgt in ipairs(activeTargets) do
                         if not AF.Running or Spam.PausedByMod then break end
                         local tx, ty = tgt.tx, tgt.ty
@@ -3095,17 +2933,15 @@ local function afStart()
                         for hitIdx = 1, (maxHits + extraVerifyRetries) do
                             if not AF.Running or Spam.PausedByMod then break end
 
-                            -- Verifikasi sebelum memukul (setelah pukulan pertama jika detect tile akurat)
                             if hitIdx > 1 then
                                 local stillThere = afCheckTileHasBlock(tx, ty)
                                 if not stillThere and getValue("AF_SmartVerify", true) then
-                                    afUpdateButtonAndStatus(string.format("✔ Tile (%+d,%+d) sudah hancur pada hit ke-%d -> Skip", tgt.dx, tgt.dy, hitIdx - 1))
+                                    afUpdateButtonAndStatus(string.format("✔ Tile (%+d,%+d) hancur pada hit ke-%d -> Skip", tgt.dx, tgt.dy, hitIdx - 1))
                                     break
                                 end
                             end
 
                             if hitIdx > maxHits then
-                                -- Block belum hancur padahal sudah mencapai jumlah hit normal -> jeda sebentar lalu pukul lagi
                                 afUpdateButtonAndStatus(string.format("⏳ Tile (%+d,%+d) belum hancur, jeda verifikasi...", tgt.dx, tgt.dy))
                                 task.wait(math.max(AF.BreakDelay * 0.75, 0.08))
                             end
@@ -3117,12 +2953,9 @@ local function afStart()
                         AF.BrokenCount += 1
                     end
 
-                    -- =========================================================
-                    -- TAHAP 3: AUTO COLLECT (TELEPORT VIA SERVER COLLECT)
-                    -- =========================================================
                     if AF.Running and not Spam.PausedByMod and AF.AutoCollect then
-                        afUpdateButtonAndStatus("🧲 Auto Collect: mengambil drop item via server...")
-                        afRunAutoCollect(originX, originY, activeTargets)
+                        afUpdateButtonAndStatus("🧲 Auto Collect: kirim paket ambil drop...")
+                        afRunAutoCollect(originX, originY)
                     end
 
                     if AF.RefreshBPUI then pcall(AF.RefreshBPUI, false) end
@@ -3137,9 +2970,7 @@ local function afToggle()
     if AF.Running then afStop("Manual Stop") else afStart() end
 end
 
--- =========================================================================
--- MOUNT UI AUTO FARM: GRID 5x5 SIMETRIS + AVATAR TENGAH + BP BLOCK SELECTOR
--- =========================================================================
+
 local function afMountEmbeddedUI()
     task.spawn(function()
         task.wait(0.9)
@@ -3153,7 +2984,7 @@ local function afMountEmbeddedUI()
 
         local holder = Instance.new("Frame")
         holder.Name = "R8DV_AutoFarmSuite"
-        holder.Size = UDim2.new(1, 0, 0, 520)
+        holder.Size = UDim2.new(1, 0, 0, 900)
         holder.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
         holder.BorderSizePixel = 0
         holder.LayoutOrder = 99
@@ -3161,22 +2992,17 @@ local function afMountEmbeddedUI()
         uiCorner(holder, 10)
         uiStroke(holder, Color3.fromRGB(38, 40, 48), 1)
 
-        -- Status Banner di bagian paling atas
-        local statusBanner = uiLabel(holder, "⏹ STATUS: Siap — Pilih Block dari BP & Pilih Tile Target pada Grid 5x5", 11, Color3.fromRGB(130, 210, 255), UIFONT.bold)
+        local statusBanner = uiLabel(holder, "⏹ Siap — pilih block dan tile target", 11, Color3.fromRGB(130, 210, 255), UIFONT.bold, Enum.TextXAlignment.Center)
         statusBanner.Size = UDim2.new(1, -20, 0, 26)
         statusBanner.Position = UDim2.new(0, 10, 0, 8)
         statusBanner.BackgroundTransparency = 0
         statusBanner.BackgroundColor3 = Color3.fromRGB(20, 23, 30)
-        statusBanner.TextXAlignment = Enum.TextXAlignment.Center
         uiCorner(statusBanner, 6)
         AF.StatusLbl = statusBanner
 
-        -- =================================================================
-        -- PANEL KIRI: MATRIX 5x5 SIMETRIS + AVATAR TENGAH
-        -- =================================================================
+        -- Panel grid (atas, lebar penuh)
         local matrixPanel = Instance.new("Frame")
-        matrixPanel.Name = "Matrix5x5Panel"
-        matrixPanel.Size = UDim2.new(0.46, -14, 1, -48)
+        matrixPanel.Size = UDim2.new(1, -20, 0, 420)
         matrixPanel.Position = UDim2.new(0, 10, 0, 40)
         matrixPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
         matrixPanel.BorderSizePixel = 0
@@ -3184,81 +3010,48 @@ local function afMountEmbeddedUI()
         uiCorner(matrixPanel, 8)
         uiStroke(matrixPanel, Color3.fromRGB(44, 48, 58), 1)
 
-        local matTitle = uiLabel(matrixPanel, "TILE TARGET 5×5 (SIMETRIS)", 11, Color3.fromRGB(235, 240, 250), UIFONT.bold, Enum.TextXAlignment.Center)
-        matTitle.Size = UDim2.new(1, -12, 0, 18)
-        matTitle.Position = UDim2.new(0, 6, 0, 8)
-
-        local matSub = uiLabel(matrixPanel, "Kiri -X | Kanan +X | Atas +Y | Bawah -Y", 10, Color3.fromRGB(145, 155, 175), UIFONT.reg, Enum.TextXAlignment.Center)
-        matSub.Size = UDim2.new(1, -12, 0, 15)
-        matSub.Position = UDim2.new(0, 6, 0, 25)
-
-        -- Container Kotak 5x5 Simetris
+        -- 5x5 persegi, ukuran tetap, di tengah panel
         local gridFrame = Instance.new("Frame")
-        gridFrame.Name = "SymmetricalGrid5x5"
-        gridFrame.Size = UDim2.new(1, -20, 0, 290)
-        gridFrame.Position = UDim2.new(0, 10, 0, 46)
+        gridFrame.Size = UDim2.fromOffset(300, 300)
+        gridFrame.AnchorPoint = Vector2.new(0.5, 0)
+        gridFrame.Position = UDim2.new(0.5, 0, 0, 12)
         gridFrame.BackgroundColor3 = Color3.fromRGB(13, 14, 18)
         gridFrame.BorderSizePixel = 0
         gridFrame.Parent = matrixPanel
         uiCorner(gridFrame, 8)
         uiStroke(gridFrame, Color3.fromRGB(34, 38, 48), 1)
 
-        local gridPad = Instance.new("UIPadding")
-        gridPad.PaddingTop = UDim.new(0, 8)
-        gridPad.PaddingBottom = UDim.new(0, 8)
-        gridPad.PaddingLeft = UDim.new(0, 8)
-        gridPad.PaddingRight = UDim.new(0, 8)
-        gridPad.Parent = gridFrame
+        local gp = Instance.new("UIPadding")
+        gp.PaddingTop, gp.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+        gp.PaddingLeft, gp.PaddingRight = UDim.new(0, 8), UDim.new(0, 8)
+        gp.Parent = gridFrame
 
         local uiGrid = Instance.new("UIGridLayout")
-        uiGrid.CellSize = UDim2.new(0.2, -5, 0.2, -5)
-        uiGrid.CellPadding = UDim2.new(0, 6, 0, 6)
+        uiGrid.CellSize = UDim2.fromOffset(52, 52)
+        uiGrid.CellPadding = UDim2.fromOffset(6, 6)
         uiGrid.SortOrder = Enum.SortOrder.LayoutOrder
         uiGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
         uiGrid.VerticalAlignment = Enum.VerticalAlignment.Center
         uiGrid.Parent = gridFrame
 
-        local selSummaryLbl = uiLabel(matrixPanel, "Tile Aktif: (+1, 0)", 10, Color3.fromRGB(120, 220, 155), UIFONT.bold, Enum.TextXAlignment.Center)
-        selSummaryLbl.Size = UDim2.new(1, -16, 0, 20)
-        selSummaryLbl.Position = UDim2.new(0, 8, 0, 342)
+        local function mkBtn(text, x, w, y, h, bg, fg, size)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(w[1], w[2], 0, h)
+            b.Position = UDim2.new(x[1], x[2], 0, y)
+            b.BackgroundColor3 = bg
+            b.AutoButtonColor = false
+            b.TextSize = size or 10
+            b.TextColor3 = fg
+            b.Text = text
+            lockFont(b, UIFONT.bold)
+            b.Parent = matrixPanel
+            uiCorner(b, 7)
+            return b
+        end
 
-        -- Tombol Preset Cepat di bawah Grid 5x5
-        local clearTilesBtn = Instance.new("TextButton")
-        clearTilesBtn.Size = UDim2.new(0.48, -10, 0, 28)
-        clearTilesBtn.Position = UDim2.new(0, 10, 0, 366)
-        clearTilesBtn.BackgroundColor3 = Color3.fromRGB(45, 24, 28)
-        clearTilesBtn.AutoButtonColor = false
-        clearTilesBtn.TextSize = 10
-        clearTilesBtn.TextColor3 = Color3.fromRGB(255, 125, 135)
-        clearTilesBtn.Text = "RESET TILE"
-        lockFont(clearTilesBtn, UIFONT.bold)
-        clearTilesBtn.Parent = matrixPanel
-        uiCorner(clearTilesBtn, 6)
-
-        local aroundBtn = Instance.new("TextButton")
-        aroundBtn.Size = UDim2.new(0.48, -10, 0, 28)
-        aroundBtn.Position = UDim2.new(0.52, 0, 0, 366)
-        aroundBtn.BackgroundColor3 = Color3.fromRGB(28, 42, 62)
-        aroundBtn.AutoButtonColor = false
-        aroundBtn.TextSize = 10
-        aroundBtn.TextColor3 = Color3.fromRGB(135, 195, 255)
-        aroundBtn.Text = "ATAS +1 & KANAN +1"
-        lockFont(aroundBtn, UIFONT.bold)
-        aroundBtn.Parent = matrixPanel
-        uiCorner(aroundBtn, 6)
-
-        -- Tombol START / STOP Langsung di bawah Grid
-        local quickStartBtn = Instance.new("TextButton")
-        quickStartBtn.Size = UDim2.new(1, -20, 0, 36)
-        quickStartBtn.Position = UDim2.new(0, 10, 1, -44)
-        quickStartBtn.BackgroundColor3 = Color3.fromRGB(36, 145, 82)
-        quickStartBtn.AutoButtonColor = false
-        quickStartBtn.TextSize = 12
-        quickStartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        quickStartBtn.Text = "▶  START / STOP AUTO FARM"
-        lockFont(quickStartBtn, UIFONT.bold)
-        quickStartBtn.Parent = matrixPanel
-        uiCorner(quickStartBtn, 7)
+        local clearTilesBtn = mkBtn("RESET TILE", { 0, 12 }, { 0.5, -18 }, 320, 30, Color3.fromRGB(45, 24, 28), Color3.fromRGB(255, 125, 135))
+        local presetBtn = mkBtn("ATAS & KANAN", { 0.5, 6 }, { 0.5, -18 }, 320, 30, Color3.fromRGB(28, 42, 62), Color3.fromRGB(135, 195, 255))
+        local quickStartBtn = mkBtn("▶  START / STOP AUTO FARM", { 0, 12 }, { 1, -24 }, 362, 44, Color3.fromRGB(36, 145, 82), Color3.fromRGB(255, 255, 255), 12)
         quickStartBtn.Activated:Connect(function()
             afToggle()
             quickStartBtn.BackgroundColor3 = AF.Running and Color3.fromRGB(175, 45, 55) or Color3.fromRGB(36, 145, 82)
@@ -3268,89 +3061,85 @@ local function afMountEmbeddedUI()
         local cellButtons = {}
 
         local function rebuildTileOrder()
-            local list, labels = {}, {}
+            local list = {}
             for dy = 2, -2, -1 do
                 for dx = -2, 2 do
-                    local key = tostring(dx) .. "," .. tostring(dy)
-                    if AF.SelectedTiles[key] then
+                    if AF.SelectedTiles[dx .. "," .. dy] then
                         list[#list + 1] = { dx = dx, dy = dy }
-                        labels[#labels + 1] = string.format("(%+d,%+d)", dx, dy)
                     end
                 end
             end
             AF.TileOrder = list
-            selSummaryLbl.Text = #labels > 0 and ("Tile Target (" .. #labels .. "): " .. table.concat(labels, " ")) or "Belum ada tile dipilih!"
         end
 
         local function refreshGridVisuals()
             rebuildTileOrder()
-            for key, btnObj in pairs(cellButtons) do
-                local active = AF.SelectedTiles[key] ~= nil
-                btnObj.btn.BackgroundColor3 = active and Color3.fromRGB(32, 95, 62) or Color3.fromRGB(22, 25, 32)
-                btnObj.stroke.Color = active and Color3.fromRGB(75, 215, 130) or Color3.fromRGB(44, 48, 60)
-                btnObj.coordLbl.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(165, 172, 190)
-                btnObj.dirLbl.TextColor3 = active and Color3.fromRGB(150, 245, 185) or Color3.fromRGB(105, 112, 128)
+            for key, o in pairs(cellButtons) do
+                local on = AF.SelectedTiles[key] ~= nil
+                o.btn.BackgroundColor3 = on and Color3.fromRGB(38, 130, 82) or Color3.fromRGB(22, 25, 32)
+                o.stroke.Color = on and Color3.fromRGB(95, 235, 150) or Color3.fromRGB(44, 48, 60)
+                o.stroke.Thickness = on and 2 or 1
             end
         end
 
-        -- Bangun 25 Kotak (5x5): Baris atas dy = +2 sampai bawah dy = -2, Kolom kiri dx = -2 sampai kanan dx = +2
-        local orderIdx = 0
+        -- Kotak tengah: ikon dari item game yang sedang dipakai (bukan foto Roblox)
+        local centerCell = Instance.new("Frame")
+        centerCell.Name = "YouCell"
+        centerCell.LayoutOrder = 13
+        centerCell.BackgroundColor3 = Color3.fromRGB(24, 38, 58)
+        centerCell.BorderSizePixel = 0
+        centerCell.Parent = gridFrame
+        uiCorner(centerCell, 7)
+        uiStroke(centerCell, Color3.fromRGB(80, 185, 255), 2)
+
+        local dot = Instance.new("Frame")
+        dot.Size = UDim2.fromOffset(14, 14)
+        dot.AnchorPoint = Vector2.new(0.5, 0.5)
+        dot.Position = UDim2.fromScale(0.5, 0.5)
+        dot.BackgroundColor3 = Color3.fromRGB(90, 225, 255)
+        dot.BorderSizePixel = 0
+        dot.Parent = centerCell
+        uiCorner(dot, 99)
+
+        local youIcon = scMakeIcon(centerCell, 4)
+        youIcon.frame.Visible = false
+        local PRIORITY = { "hair", "head", "face", "mask", "hat", "chest", "shirt", "body" }
+
+        local function refreshAvatar()
+            local W = SC.Worn
+            local pick
+            if W and SC.DB then
+                for _, s in ipairs(PRIORITY) do
+                    if W[s] then pick = W[s]; break end
+                end
+                if not pick then
+                    for _, id in pairs(W) do pick = id; break end
+                end
+            end
+            if pick then
+                scSetIcon(youIcon, pick)
+                dot.Visible = false
+            else
+                youIcon.frame.Visible = false
+                dot.Visible = true
+            end
+        end
+
+        local idx = 0
         for dy = 2, -2, -1 do
             for dx = -2, 2 do
-                orderIdx += 1
-                local key = tostring(dx) .. "," .. tostring(dy)
-
-                if dx == 0 and dy == 0 then
-                    -- KOTAK TENGAH (0,0): AVATAR PROFILE LOCALPLAYER
-                    local centerCell = Instance.new("Frame")
-                    centerCell.Name = "PlayerCenter_0_0"
-                    centerCell.LayoutOrder = orderIdx
-                    centerCell.BackgroundColor3 = Color3.fromRGB(24, 38, 58)
-                    centerCell.BorderSizePixel = 0
-                    centerCell.Parent = gridFrame
-                    uiCorner(centerCell, 7)
-                    uiStroke(centerCell, Color3.fromRGB(80, 185, 255), 2)
-
-                    local avatarImg = Instance.new("ImageLabel")
-                    avatarImg.Size = UDim2.new(1, -6, 1, -16)
-                    avatarImg.Position = UDim2.new(0, 3, 0, 2)
-                    avatarImg.BackgroundTransparency = 1
-                    avatarImg.ScaleType = Enum.ScaleType.Fit
-                    avatarImg.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", LocalPlayer.UserId)
-                    avatarImg.Parent = centerCell
-                    uiCorner(avatarImg, 6)
-
-                    local youTag = uiLabel(centerCell, "YOU (0,0)", 8, Color3.fromRGB(130, 215, 255), UIFONT.bold, Enum.TextXAlignment.Center)
-                    youTag.Size = UDim2.new(1, 0, 0, 12)
-                    youTag.Position = UDim2.new(0, 0, 1, -13)
-                else
+                idx += 1
+                if not (dx == 0 and dy == 0) then
+                    local key = dx .. "," .. dy
                     local btn = Instance.new("TextButton")
-                    btn.Name = "Tile_" .. key
-                    btn.LayoutOrder = orderIdx
+                    btn.LayoutOrder = idx
                     btn.BackgroundColor3 = Color3.fromRGB(22, 25, 32)
                     btn.AutoButtonColor = false
                     btn.Text = ""
                     btn.Parent = gridFrame
                     uiCorner(btn, 7)
                     local st = uiStroke(btn, Color3.fromRGB(44, 48, 60), 1)
-
-                    local coordLbl = uiLabel(btn, string.format("%+d, %+d", dx, dy), 11, Color3.fromRGB(175, 182, 198), UIFONT.bold, Enum.TextXAlignment.Center)
-                    coordLbl.Size = UDim2.new(1, -4, 0, 18)
-                    coordLbl.Position = UDim2.new(0, 2, 0.5, -14)
-
-                    local dirTag = ""
-                    if dx == 0 and dy > 0 then dirTag = "ATAS +" .. dy
-                    elseif dx == 0 and dy < 0 then dirTag = "BAWAH " .. dy
-                    elseif dy == 0 and dx > 0 then dirTag = "KANAN +" .. dx
-                    elseif dy == 0 and dx < 0 then dirTag = "KIRI " .. dx
-                    else dirTag = string.format("X%+d Y%+d", dx, dy) end
-
-                    local dirLbl = uiLabel(btn, dirTag, 8, Color3.fromRGB(115, 122, 138), UIFONT.reg, Enum.TextXAlignment.Center)
-                    dirLbl.Size = UDim2.new(1, -4, 0, 12)
-                    dirLbl.Position = UDim2.new(0, 2, 0.5, 4)
-
-                    cellButtons[key] = { btn = btn, stroke = st, coordLbl = coordLbl, dirLbl = dirLbl }
-
+                    cellButtons[key] = { btn = btn, stroke = st }
                     btn.Activated:Connect(function()
                         if AF.SelectedTiles[key] then
                             AF.SelectedTiles[key] = nil
@@ -3362,55 +3151,55 @@ local function afMountEmbeddedUI()
                 end
             end
         end
+        -- catatan: LayoutOrder 13 = sel ke-13 = baris 3 kolom 3 = tengah (kita)
 
         clearTilesBtn.Activated:Connect(function()
             AF.SelectedTiles = {}
             refreshGridVisuals()
         end)
-        aroundBtn.Activated:Connect(function()
-            AF.SelectedTiles = {
-                ["0,1"] = { dx = 0, dy = 1 },
-                ["1,0"] = { dx = 1, dy = 0 },
-            }
+        presetBtn.Activated:Connect(function()
+            AF.SelectedTiles = { ["0,1"] = { dx = 0, dy = 1 }, ["1,0"] = { dx = 1, dy = 0 } }
             refreshGridVisuals()
         end)
-
         AF.UpdateTileGridUI = refreshGridVisuals
         refreshGridVisuals()
+        refreshAvatar()
+        task.spawn(function()
+            while holder.Parent do
+                pcall(refreshAvatar)
+                task.wait(1)
+            end
+        end)
 
-        -- =================================================================
-        -- PANEL KANAN: PEMILIH BLOCK DARI BP (GAMBAR + COUNT + FILTER BLOCK)
-        -- =================================================================
+        -- Panel BP (di bawah grid, lebar penuh)
         local bpPanel = Instance.new("Frame")
-        bpPanel.Name = "BackpackBlockSelector"
-        bpPanel.Size = UDim2.new(0.54, -14, 1, -48)
-        bpPanel.Position = UDim2.new(0.46, 4, 0, 40)
+        bpPanel.Size = UDim2.new(1, -20, 0, 420)
+        bpPanel.Position = UDim2.new(0, 10, 0, 470)
         bpPanel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
         bpPanel.BorderSizePixel = 0
         bpPanel.Parent = holder
         uiCorner(bpPanel, 8)
         uiStroke(bpPanel, Color3.fromRGB(44, 48, 58), 1)
 
-        local bpHeader = uiLabel(bpPanel, "PILIH BLOCK DARI BP (FILTER: BLOCK ONLY)", 11, Color3.fromRGB(235, 240, 250), UIFONT.bold)
-        bpHeader.Size = UDim2.new(1, -110, 0, 20)
-        bpHeader.Position = UDim2.new(0, 10, 0, 8)
+        local bpHeader = uiLabel(bpPanel, "PILIH BLOCK DARI BP", 12, Color3.fromRGB(235, 240, 250), UIFONT.bold)
+        bpHeader.Size = UDim2.new(1, -130, 0, 20)
+        bpHeader.Position = UDim2.new(0, 12, 0, 10)
 
         local scanBpBtn = Instance.new("TextButton")
-        scanBpBtn.Size = UDim2.new(0, 92, 0, 22)
-        scanBpBtn.Position = UDim2.new(1, -100, 0, 7)
+        scanBpBtn.Size = UDim2.new(0, 108, 0, 26)
+        scanBpBtn.Position = UDim2.new(1, -116, 0, 8)
         scanBpBtn.BackgroundColor3 = Color3.fromRGB(32, 65, 115)
         scanBpBtn.AutoButtonColor = false
-        scanBpBtn.TextSize = 9
+        scanBpBtn.TextSize = 10
         scanBpBtn.TextColor3 = Color3.fromRGB(235, 242, 255)
         scanBpBtn.Text = "↻ REFRESH BP"
         lockFont(scanBpBtn, UIFONT.bold)
         scanBpBtn.Parent = bpPanel
-        uiCorner(scanBpBtn, 5)
+        uiCorner(scanBpBtn, 6)
 
-        -- Search Bar Block BP
         local bpSearchFrame = Instance.new("Frame")
-        bpSearchFrame.Size = UDim2.new(1, -16, 0, 32)
-        bpSearchFrame.Position = UDim2.new(0, 8, 0, 34)
+        bpSearchFrame.Size = UDim2.new(1, -20, 0, 34)
+        bpSearchFrame.Position = UDim2.new(0, 10, 0, 40)
         bpSearchFrame.BackgroundColor3 = Color3.fromRGB(24, 27, 35)
         bpSearchFrame.BorderSizePixel = 0
         bpSearchFrame.Parent = bpPanel
@@ -3422,7 +3211,7 @@ local function afMountEmbeddedUI()
         bpSearchBox.Position = UDim2.new(0, 8, 0, 2)
         bpSearchBox.BackgroundTransparency = 1
         bpSearchBox.ClearTextOnFocus = false
-        bpSearchBox.PlaceholderText = "🔍 Cari nama block atau ID di BP..."
+        bpSearchBox.PlaceholderText = "Cari nama block atau ID..."
         bpSearchBox.PlaceholderColor3 = Color3.fromRGB(120, 126, 142)
         bpSearchBox.Text = ""
         bpSearchBox.TextSize = 11
@@ -3431,16 +3220,15 @@ local function afMountEmbeddedUI()
         lockFont(bpSearchBox, UIFONT.med)
         bpSearchBox.Parent = bpSearchFrame
 
-        local selectedBlockBanner = uiLabel(bpPanel, "Block Terpilih: (Belum dipilih)", 10, Color3.fromRGB(255, 210, 110), UIFONT.bold)
-        selectedBlockBanner.Size = UDim2.new(1, -16, 0, 18)
-        selectedBlockBanner.Position = UDim2.new(0, 10, 0, 70)
+        local selectedBlockBanner = uiLabel(bpPanel, "Block aktif: (belum dipilih)", 10, Color3.fromRGB(255, 210, 110), UIFONT.bold)
+        selectedBlockBanner.Size = UDim2.new(1, -20, 0, 18)
+        selectedBlockBanner.Position = UDim2.new(0, 12, 0, 78)
 
         local bpVList
 
         local function makeBpRow(scroll)
             local row = {}
             local card = Instance.new("TextButton")
-            card.Name = "BPBlockRow"
             card.BorderSizePixel = 0
             card.AutoButtonColor = false
             card.Text = ""
@@ -3457,34 +3245,31 @@ local function afMountEmbeddedUI()
             iconBg.BorderSizePixel = 0
             iconBg.Parent = card
             uiCorner(iconBg, 6)
-            uiStroke(iconBg, Color3.fromRGB(34, 36, 45), 1)
             row.icon = scMakeIcon(iconBg, 3)
 
             row.title = uiLabel(card, "", 12, Color3.fromRGB(242, 244, 250), UIFONT.bold)
-            row.title.Size = UDim2.new(1, -145, 0, 20)
+            row.title.Size = UDim2.new(1, -150, 0, 20)
             row.title.Position = UDim2.new(0, 60, 0, 8)
 
             row.sub = uiLabel(card, "", 10, Color3.fromRGB(145, 152, 168), UIFONT.reg)
-            row.sub.Size = UDim2.new(1, -145, 0, 18)
+            row.sub.Size = UDim2.new(1, -150, 0, 18)
             row.sub.Position = UDim2.new(0, 60, 0, 29)
 
-            local countBadge = uiLabel(card, "x0", 10, Color3.fromRGB(255, 255, 255), UIFONT.bold, Enum.TextXAlignment.Center)
-            countBadge.Size = UDim2.new(0, 74, 0, 24)
-            countBadge.Position = UDim2.new(1, -82, 0.5, -12)
-            countBadge.BackgroundTransparency = 0
-            uiCorner(countBadge, 5)
-            row.badge = countBadge
+            local badge = uiLabel(card, "", 10, Color3.fromRGB(255, 255, 255), UIFONT.bold, Enum.TextXAlignment.Center)
+            badge.Size = UDim2.new(0, 78, 0, 24)
+            badge.Position = UDim2.new(1, -86, 0.5, -12)
+            badge.BackgroundTransparency = 0
+            uiCorner(badge, 5)
+            row.badge = badge
 
             card.Activated:Connect(function()
                 if not row.item then return end
                 AF.SelectedBlockId = row.item.id
-                if row.item.hits and row.item.hits > 0 then
-                    AF.BreakHits = row.item.hits
-                end
-                selectedBlockBanner.Text = string.format("Block Aktif: %s (#%d)  •  BP: %d", row.item.name, row.item.id, row.item.bpCount or 0)
+                if row.item.hits and row.item.hits > 0 then AF.BreakHits = row.item.hits end
+                selectedBlockBanner.Text = string.format("Block aktif: %s (#%d)  •  BP: x%d",
+                    row.item.name, row.item.id, row.item.bpCount or 0)
                 bpVList:Refresh()
             end)
-
             return row
         end
 
@@ -3498,18 +3283,17 @@ local function afMountEmbeddedUI()
                 scSetIcon(row.icon, item.id)
             end
             row.title.Text = string.format("%s   #%d", item.name, item.id)
-            row.sub.Text = string.format("BLOCK  •  HP/Hit: %d  •  BP Count: %d", item.hits or 4, cnt)
-            row.badge.Text = sel and string.format("PILIH (x%d)", cnt) or string.format("BP: x%d", cnt)
-            row.badge.BackgroundColor3 = sel and Color3.fromRGB(40, 150, 85) or (cnt > 0 and Color3.fromRGB(38, 75, 130) or Color3.fromRGB(30, 33, 42))
+            row.sub.Text = string.format("HP/Hit: %d", item.hits or 4)
+            row.badge.Text = sel and string.format("✓ x%d", cnt) or string.format("x%d", cnt)
+            row.badge.BackgroundColor3 = sel and Color3.fromRGB(40, 150, 85)
+                or (cnt > 0 and Color3.fromRGB(38, 75, 130) or Color3.fromRGB(30, 33, 42))
         end
 
         bpVList = newVList(bpPanel, {
             name = "BPBlocksScroll",
-            rowH = 58,
-            gap = 6,
-            pad = 8,
-            size = UDim2.new(1, -16, 1, -98),
-            position = UDim2.new(0, 8, 0, 90),
+            rowH = 58, gap = 6, pad = 8,
+            size = UDim2.new(1, -20, 1, -108),
+            position = UDim2.new(0, 10, 0, 98),
             makeRow = makeBpRow,
             bind = bindBpRow,
         })
@@ -3525,14 +3309,11 @@ local function afMountEmbeddedUI()
             for _, b in ipairs(SC.BlockItems or {}) do
                 local c = counts[b.id] or 0
                 b.bpCount = c
-                local passOwned = (not onlyOwned) or (not hasAnyOwned) or (c > 0) or (AF.SelectedBlockId == b.id)
-                if passOwned then
-                    if q == "" or b.lname:find(q, 1, true) or tostring(b.id):find(q, 1, true) then
-                        out[#out + 1] = b
-                    end
+                local pass = (not onlyOwned) or (not hasAnyOwned) or (c > 0) or (AF.SelectedBlockId == b.id)
+                if pass and (q == "" or b.lname:find(q, 1, true) or tostring(b.id):find(q, 1, true)) then
+                    out[#out + 1] = b
                 end
             end
-
             table.sort(out, function(a, b)
                 local ca, cb = a.bpCount or 0, b.bpCount or 0
                 if ca ~= cb then return ca > cb end
@@ -3541,12 +3322,8 @@ local function afMountEmbeddedUI()
 
             if AF.SelectedBlockId and SC.BlockMap[AF.SelectedBlockId] then
                 local sb = SC.BlockMap[AF.SelectedBlockId]
-                selectedBlockBanner.Text = string.format("Block Aktif: %s (#%d)  •  BP: x%d", sb.name, sb.id, counts[sb.id] or 0)
-            elseif #out > 0 and not AF.SelectedBlockId then
-                AF.SelectedBlockId = out[1].id
-                selectedBlockBanner.Text = string.format("Block Aktif: %s (#%d)  •  BP: x%d", out[1].name, out[1].id, out[1].bpCount or 0)
+                selectedBlockBanner.Text = string.format("Block aktif: %s (#%d)  •  BP: x%d", sb.name, sb.id, counts[sb.id] or 0)
             end
-
             bpVList:SetData(out, toTop)
         end
 
@@ -3554,17 +3331,17 @@ local function afMountEmbeddedUI()
             AF.SearchQuery = bpSearchBox.Text
             reloadBPList(true)
         end)
-        scanBpBtn.Activated:Connect(function()
-            reloadBPList(false)
-        end)
+        scanBpBtn.Activated:Connect(function() reloadBPList(false) end)
 
         AF.RefreshBPUI = reloadBPList
         reloadBPList(true)
     end)
 end
 
+
+
 -- =========================================================================
--- KATEGORI 1: SPAMMER (DIPERTAHANKAN PENUH)
+-- KATEGORI 1: SPAMMER
 -- =========================================================================
 if UI.Category then UI:Category("Spammer") end
 
@@ -3641,22 +3418,22 @@ feature("Chat", "Chat Spam")({
 })
 
 -- =========================================================================
--- KATEGORI 2: AUTO FARM (BARU - 5x5 MATRIX + BP BLOCK SELECTOR + VERIFY)
+-- KATEGORI 2: AUTO FARM
 -- =========================================================================
 if UI.Category then UI:Category("Auto Farm") end
 
 feature("Bolt", "Auto Farm")({
     center = center(function(c)
-        c:Header("Auto Farm 5×5 & BP Block Selector", "Pilih Block dari BP, pilih titik Tile 5x5 (Tengah = Lokasi Kamu), Place -> Break -> Auto Collect Terverifikasi", "Farm")
+        c:Header("Auto Farm 5×5 & BP Block Selector", "Pilih Block dari BP, pilih tile 5x5 (tengah = posisi kamu), Place -> Break -> Collect terverifikasi", "Farm")
 
         c:StatRow({
             { Icon = "Bolt",   Label = "Filter",  Value = "Block Only" },
             { Icon = "Check",  Label = "Verify",  Value = "Skip Place/Break" },
-            { Icon = "Shield", Label = "Collect", Value = "Server Teleport" }
+            { Icon = "Shield", Label = "Collect", Value = "Tanpa Teleport" }
         })
 
         c:Card("MATRIX TILE 5X5 & KATALOG BP", nil, "Palette", {
-            Subtitle = "Kiri = Matrix 5x5 Simetris (Kanan +1, Kiri -1, Atas +1, Bawah -1). Kanan = Pilih Block dari BP dengan Gambar & Count"
+            Subtitle = "Atas = Grid 5x5 (tengah = kamu, atas = tile di atasmu). Bawah = pilih Block dari BP"
         })
     end),
 
@@ -3675,7 +3452,7 @@ feature("Bolt", "Auto Farm")({
             if AF.RefreshBPUI then pcall(AF.RefreshBPUI, true) end
         end)
         CtrlCard:Toggle("Verifikasi Cerdas (Skip Place Jika Ada & Skip Break Jika Hancur)", "AF_SmartVerify", true)
-        CtrlCard:Toggle("Konversi Sumbu Y (Atas +1 = Atas Kepala Karakter)", "AF_InvertY", true)
+        CtrlCard:Toggle("Konversi Sumbu Y (Atas = Atas Kepala Karakter)", "AF_InvertY", true)
 
         local DelayCard = r:Card("Pengaturan Delay & Break", nil, "Clock", {
             Subtitle = "Atur jeda Place, jeda pukulan Break, dan jumlah pukulan"
@@ -3690,10 +3467,10 @@ feature("Bolt", "Auto Farm")({
             AF.BreakHits = tonumber(v) or 4
         end, 1)
 
-        local CollectCard = r:Card("Auto Collect (Teleport Server)", nil, "Shield", {
-            Subtitle = "Otomatis ambil drop item via paket server lalu kembali ke posisi tengah"
+        local CollectCard = r:Card("Auto Collect (Tanpa Teleport)", nil, "Shield", {
+            Subtitle = "Kirim paket ambil drop di sekitar tanpa memindahkan karakter"
         })
-        CollectCard:Toggle("Aktifkan Auto Collect Drop", "AF_AutoCollect", true, function(st)
+        CollectCard:Toggle("Aktifkan Auto Collect Drop", "AF_AutoCollect", false, function(st)
             AF.AutoCollect = st
         end)
         CollectCard:Slider("Radius Auto Collect", "AF_CollectRad", 1, 10, 4, " tile", function(v)
@@ -3706,7 +3483,7 @@ feature("Bolt", "Auto Farm")({
 })
 
 -- =========================================================================
--- KATEGORI 3: SET VISUAL NAME (DIPERTAHANKAN PENUH)
+-- KATEGORI 3: SET VISUAL NAME
 -- =========================================================================
 if UI.Category then UI:Category("Visual Name") end
 
@@ -3748,23 +3525,23 @@ feature("Name", "Set Visual Name")({
 })
 
 -- =========================================================================
--- KATEGORI 4: SET CLOTHES (KARTU & IKON BESAR + 2x TAP PAKAI + 1 ROW VERTIKAL)
+-- KATEGORI 4: SET CLOTHES
 -- =========================================================================
 pcall(scBuildItems)
 if UI.Category then UI:Category("Set Clothes") end
 
 feature("Item", "Set Clothes")({
     center = center(function(c)
-        c:Header("Set Clothes & Visual Catalog", "Search bar di atas list, Katalog besar di kiri (2x Tap Pakai), Item Dipakai 1 kolom ke bawah di kanan (1x Tap Copot)", "Client")
+        c:Header("Set Clothes & Visual Catalog", "Search bar di atas, Katalog (2x Tap Pakai), lalu Item Dipakai di bawahnya (1x Tap Copot)", "Client")
 
         c:StatRow({
-            { Icon = "Check",  Label = "Katalog Kiri", Value = "2x Tap Pakai" },
-            { Icon = "Bolt",   Label = "Kolom Kanan",  Value = "1x Tap Copot" },
+            { Icon = "Check",  Label = "Katalog", Value = "2x Tap Pakai" },
+            { Icon = "Bolt",   Label = "Dipakai", Value = "1x Tap Copot" },
             { Icon = "Shield", Label = "Efek & Visual", Value = "Dual-Method" }
         })
 
         local CatalogCard = c:Card("KATALOG VISUAL CLOTHES", nil, "Palette", {
-            Subtitle = "Filter kategori slot di bawah atau gunakan Search Bar langsung di atas daftar pakaian"
+            Subtitle = "Filter kategori slot di bawah atau gunakan Search Bar di atas daftar pakaian"
         })
         CatalogCard:Dropdown("Filter Kategori Slot (Mask, Head, Wing, dll)", "SC_SlotFilter", SC.Slots, "All", function(slotVal)
             SC.SelectedSlot = tostring(slotVal or "All")
@@ -3810,13 +3587,13 @@ feature("Item", "Set Clothes")({
 })
 
 -- =========================================================================
--- KATEGORI 5: ESP & CHECK (SPIDERWEB JARING VISUAL + TANPA TOMBOL CRASH)
+-- KATEGORI 5: ESP & CHECK
 -- =========================================================================
 if UI.Category then UI:Category("ESP & Check") end
 
 feature("Shield", "ESP & Check")({
     center = center(function(c)
-        c:Header("Spiderweb ESP & Moderator Check", "Jaring visual client dari kita ke target tanpa notif posisi palsu dan tanpa tombol GO yang bikin crash", "Client")
+        c:Header("Spiderweb ESP & Moderator Check", "Garis visual client dari kita ke badan player target", "Client")
 
         c:StatRow({
             { Icon = "Shield", Label = "Check", Value = "Real-time" },
@@ -3825,7 +3602,7 @@ feature("Shield", "ESP & Check")({
         })
 
         local EspCard = c:Card("JARING ESP PLAYER (SPIDERWEB)", nil, "Bolt", {
-            Subtitle = "Menggambar jaring penghubung dari posisi kita ke target secara murni di layar client"
+            Subtitle = "Menggambar garis dari posisi kita ke badan target secara murni di layar client"
         })
         EspCard:Toggle("Aktifkan Jaring ESP", "ESP_Master", true, function(st)
             if not st then espClearAll() end
@@ -3964,7 +3741,7 @@ task.spawn(function()
 end)
 
 -- =========================================================================
--- KATEGORI 6: SETTINGS (DIPERTAHANKAN PENUH)
+-- KATEGORI 6: SETTINGS
 -- =========================================================================
 if UI.Category then UI:Category("Settings") end
 
