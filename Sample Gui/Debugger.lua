@@ -43,11 +43,14 @@ local function ser(v, d, seen)
     elseif t == "number" or t == "boolean" or t == "nil" then return tostring(v)
     elseif t == "buffer" then
         local len = buffer.len(v)
-        local bytes = {}
-        for i = 0, math.min(len - 1, 31) do
-            bytes[#bytes + 1] = string.format("%02X", buffer.readu8(v, i))
+        local lim = math.min(len, 256)
+        local bytes, ascii = {}, {}
+        for i = 0, lim - 1 do
+            local b = buffer.readu8(v, i)
+            bytes[#bytes + 1] = string.format("%02X", b)
+            ascii[#ascii + 1] = (b >= 32 and b <= 126) and string.char(b) or "."
         end
-        return string.format("<buffer len=%d hex=%s%s>", len, table.concat(bytes, " "), len > 32 and "..." or "")
+        return string.format("<buffer len=%d hex=%s%s | ascii=%s>", len, table.concat(bytes, " "), len > lim and " ..." or "", table.concat(ascii))
     elseif t == "Instance" then return "<" .. v.ClassName .. "> " .. fullName(v)
     elseif t == "table" then
         if seen[v] or d > 4 then return "{...}" end
@@ -170,6 +173,32 @@ function S.classify(inst)
 end
 
 -- ============ PACKET SPY ============
+-- Buffer -> readable info: u8 list, embedded ASCII strings (len>=3), try string decode
+function S.bufferInfo(buf)
+    local len = buffer.len(buf)
+    local okS, str = pcall(buffer.tostring, buf)
+    if not okS then return nil, "buffer" end
+    local runs, cur = {}, {}
+    local function flush()
+        if #cur >= 3 then runs[#runs + 1] = table.concat(cur) end
+        cur = {}
+    end
+    for i = 1, #str do
+        local b = str:byte(i)
+        if b >= 32 and b <= 126 then cur[#cur + 1] = string.char(b) else flush() end
+    end
+    flush()
+    local out = {("buffer len=%d"):format(len)}
+    if #runs > 0 then out[#out + 1] = "strings: " .. table.concat(runs, " | ") end
+    local ok1, u8 = pcall(function()
+        local t = {}
+        for i = 0, math.min(len, 128) - 1 do t[#t + 1] = buffer.readu8(buf, i) end
+        return table.concat(t, ",")
+    end)
+    if ok1 then out[#out + 1] = "u8: " .. u8 .. (len > 128 and ",..." or "") end
+    return table.concat(out, "\n"), "buffer"
+end
+
 S.Packets = {}
 S.MaxPackets = 2000
 S.Paused = false
@@ -185,7 +214,8 @@ local function record(dir, remote, method, args, caller)
     for i = 1, args.n do
         local raw = args[i]
         local dec, how = nil, nil
-        if type(raw) == "string" then dec, how = S.decode(raw) end
+        if type(raw) == "string" then dec, how = S.decode(raw)
+        elseif typeof(raw) == "buffer" then dec, how = S.bufferInfo(raw) end
         parts[#parts + 1] = {raw = raw, text = ser(raw), decoded = dec, how = how}
     end
     local pk = {
@@ -375,37 +405,94 @@ end
 
 -- ============ SCRIPT / ASSET DEBUG ============
 S.Scripts = {}
+S.ScanServices = {
+    "ReplicatedStorage", "ReplicatedFirst", "Players", "StarterGui", "StarterPack", "StarterPlayer",
+    "Workspace", "Lighting", "SoundService", "Teams", "Chat", "TextChatService", "CollectionService",
+    "ContextActionService", "MarketplaceService", "PathfindingService", "PhysicsService",
+}
 function S.ScanScripts()
     local seen, list = {}, {}
     local function add(i)
         if i and not seen[i] and typeof(i) == "Instance" and i:IsA("LuaSourceContainer") then
             seen[i] = true
-            list[#list + 1] = {inst = i, name = i.Name, class = i.ClassName, path = fullName(i), cat = S.classify(i)}
+            local cat = S.classify(i)
+            if cat == "Roblox" then return end -- skip Roblox package scripts entirely
+            list[#list + 1] = {inst = i, name = i.Name, class = i.ClassName, path = fullName(i), cat = cat}
         end
     end
-    if F.getscripts then for _, i in ipairs(safe(F.getscripts) or {}) do add(i) end end
-    if F.getmods then for _, i in ipairs(safe(F.getmods) or {}) do add(i) end end
-    if F.getnil then for _, i in ipairs(safe(F.getnil) or {}) do add(i) end end
-    for _, svc in ipairs(game:GetChildren()) do
-        pcall(function() for _, d in ipairs(svc:GetDescendants()) do add(d) end end)
+    -- only game-side containers (client-visible game scripts), not CoreGui / CorePackages
+    for _, name in ipairs(S.ScanServices) do
+        local okS, svc = pcall(function() return game:GetService(name) end)
+        if okS and svc then
+            pcall(function() for _, d in ipairs(svc:GetDescendants()) do add(d) end end)
+        end
     end
+    -- executor APIs, filtered by classify() (Roblox package dropped)
+    if F.getscripts then for _, i in ipairs(safe(F.getscripts) or {}) do pcall(add, i) end end
+    if F.getmods then for _, i in ipairs(safe(F.getmods) or {}) do pcall(add, i) end end
+    if F.getnil then for _, i in ipairs(safe(F.getnil) or {}) do pcall(add, i) end end
     table.sort(list, function(a, b) if a.cat ~= b.cat then return a.cat < b.cat end return a.path < b.path end)
     S.Scripts = list
     return list
 end
 
-function S.Source(inst)
-    if F.decompile then
-        local ok, r = pcall(F.decompile, inst)
-        if ok and type(r) == "string" and #r > 0 then return r, "decompiled" end
+local function dumpClosure(fn, depth, out, seen)
+    depth = depth or 0 out = out or {} seen = seen or {}
+    if seen[fn] or depth > 4 then return out end
+    seen[fn] = true
+    local pad = ("  "):rep(depth)
+    local dbg = debug or {}
+    local gc = getgenv().getconstants or dbg.getconstants
+    local gp = getgenv().getprotos or dbg.getprotos
+    local gi = dbg.getinfo
+    local name = "?"
+    if gi then local ok, info = pcall(gi, fn) if ok and info then name = tostring(info.name or "anonymous") .. ":" .. tostring(info.linedefined or "?") end end
+    out[#out + 1] = pad .. "-- function " .. name
+    if gc then
+        local ok, cs = pcall(gc, fn)
+        if ok and type(cs) == "table" then
+            for i, c in pairs(cs) do
+                if c ~= nil then out[#out + 1] = pad .. ("  const[%s] = %s"):format(tostring(i), ser(c)) end
+            end
+        end
     end
+    if gp then
+        local ok, ps = pcall(gp, fn)
+        if ok and type(ps) == "table" then for _, pf in ipairs(ps) do if type(pf) == "function" then dumpClosure(pf, depth + 1, out, seen) end end end
+    end
+    return out
+end
+
+-- Returns: text, how ("decompiled"|"source"|"constants"|"bytecode") or nil, reason
+function S.Source(inst)
+    local reason = {}
+    if F.decompile then
+        for attempt = 1, 2 do
+            local ok, r = pcall(F.decompile, inst)
+            if ok and type(r) == "string" and #r > 0 and not r:find("^%-%-.-[Ff]ailed to decompile") then return r, "decompiled" end
+            reason[#reason + 1] = "decompile: " .. tostring(ok and (r == "" and "empty" or r) or r)
+            if attempt == 1 then task.wait(0.05) end
+        end
+    else reason[#reason + 1] = "decompile unsupported" end
     local ok, r = pcall(function() return inst.Source end)
     if ok and r and #r > 0 then return r, "source" end
+    -- fallback: dump constants/protos from script closure (readable strings, remotes, names)
+    local gsc = getgenv().getscriptclosure
+    if gsc then
+        local okc, fn = pcall(gsc, inst)
+        if okc and type(fn) == "function" then
+            local lines = dumpClosure(fn)
+            if #lines > 1 then
+                return "-- [CONSTANT DUMP] decompile gagal, ini constants & nested function dari bytecode\n" .. table.concat(lines, "\n"), "constants"
+            end
+        end
+    end
     if F.getbc then
         local ok2, bc = pcall(F.getbc, inst)
         if ok2 and bc then return bc, "bytecode" end
+        reason[#reason + 1] = "bytecode: " .. tostring(bc)
     end
-    return nil, "failed"
+    return nil, table.concat(reason, " ; ")
 end
 
 -- FIX: SaveScripts sekarang SKIP kategori "Roblox" (package dasar Roblox).
@@ -455,7 +542,7 @@ function S.SaveScripts(list, cb, progCb)
                 S.write(sub .. "/" .. base .. "_bytecode.txt", "-- " .. s.path .. " (" .. s.class .. ", bytecode/encrypted)\n" .. hexDump)
             else
                 failc += 1
-                S.write(sub .. "/" .. base .. ".txt", "-- " .. s.path .. "\n-- decompile failed: source inaccessible")
+                S.write(sub .. "/" .. base .. ".txt", "-- " .. s.path .. "\n-- decompile failed: " .. tostring(how))
             end
             folders[sub] = true
             local pct = math.floor(5 + (i / total) * 90)
@@ -616,7 +703,7 @@ function S.ExportAll(cb, progCb)
                     add(base .. "_bytecode.txt", "-- " .. s.path .. " (" .. s.class .. ", bytecode/encrypted)\n" .. hexDump)
                     stats.scEnc += 1
                 else
-                    add(base .. ".txt", "-- " .. s.path .. "\n-- decompile failed") stats.scEnc += 1
+                    add(base .. ".txt", "-- " .. s.path .. "\n-- decompile failed: " .. tostring(how)) stats.scEnc += 1
                 end
                 local pct = math.floor(16 + (i / math.max(totalSc, 1)) * 58)
                 if i % 5 == 0 or i == totalSc then
@@ -1794,10 +1881,10 @@ function S.refreshS()
                     ScriptViewerUI:SetText("-- " .. s.path .. " [" .. s.class .. " | " .. how .. "]\n\n" .. src)
                     say("Decompiled: " .. s.name .. " (" .. how .. ")")
                 elseif src then
-                    ScriptViewerUI:SetText("-- " .. s.path .. "\n-- Bytecode only (encrypted / decompiler unavailable)\n-- Will be saved as .enc on export")
+                    ScriptViewerUI:SetText("-- " .. s.path .. "\n-- Bytecode only (decompile gagal) — hex dump, disimpan sebagai _bytecode.txt\n" .. bytesToHex(src:sub(1, 4096)))
                     say("Bytecode only: " .. s.name)
                 else
-                    ScriptViewerUI:SetText("-- " .. s.path .. "\n-- Decompile failed / script source inaccessible")
+                    ScriptViewerUI:SetText("-- " .. s.path .. "\n-- Decompile failed / script source inaccessible\n-- Reason: " .. tostring(how))
                     say("Decompile failed: " .. s.name)
                 end
             end)
@@ -1827,7 +1914,7 @@ feature("Layers", "Scripts")({
         BindLiveInput(scFilterFrame, "ScSearch", function()
             S.refreshS()
         end)
-        ScFilterCard:Dropdown("Origin Category", "ScCat", {"ALL", "Game", "Custom", "Roblox"}, "ALL", function()
+        ScFilterCard:Dropdown("Origin Category", "ScCat", {"ALL", "Game", "Custom"}, "ALL", function()
             S.refreshS()
         end)
         ScFilterCard:Button("Scan All Scripts", "SCAN", "Layers", function()
