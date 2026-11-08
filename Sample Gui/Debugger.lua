@@ -726,9 +726,10 @@ function S.ScanAssets()
                     if sg and sg.Name:find("^R8_DV_Engine_") then return end
                     if d:IsA("ValueBase") then out[#out + 1] = {tag = "VALUE", path = fullName(d), info = d.ClassName .. " = " .. tostring(d.Value)}
                     elseif d:IsA("Sound") then out[#out + 1] = {tag = "SOUND", path = fullName(d), info = "Sound " .. d.SoundId}
-                    elseif d:IsA("Decal") then out[#out + 1] = {tag = "DECAL", path = fullName(d), info = "Decal " .. d.Texture}
-                    elseif d:IsA("Texture") then out[#out + 1] = {tag = "TEX", path = fullName(d), info = "Texture " .. d.Texture}
-                    elseif d:IsA("MeshPart") then out[#out + 1] = {tag = "MESH", path = fullName(d), info = "Mesh " .. d.MeshId .. " tex " .. d.TextureID}
+                    elseif d:IsA("Decal") then out[#out + 1] = {tag = "DECAL", path = fullName(d), info = "Decal " .. d.Texture, img = d.Texture}
+                    elseif d:IsA("Texture") then out[#out + 1] = {tag = "TEX", path = fullName(d), info = "Texture " .. d.Texture, img = d.Texture}
+                    elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then out[#out + 1] = {tag = "IMAGE", path = fullName(d), info = d.ClassName .. " " .. d.Image, img = d.Image}
+                    elseif d:IsA("MeshPart") then out[#out + 1] = {tag = "MESH", path = fullName(d), info = "Mesh " .. d.MeshId .. " tex " .. d.TextureID, img = d.TextureID}
                     elseif d:IsA("Animation") then out[#out + 1] = {tag = "ANIM", path = fullName(d), info = "Anim " .. d.AnimationId} end
                     local at = d:GetAttributes()
                     for k, v in pairs(at) do out[#out + 1] = {tag = "ATTR", path = fullName(d), info = "Attr " .. k .. " = " .. tostring(v)} end
@@ -1711,6 +1712,133 @@ local function AttachCodeViewer(cardFrame, heightPx, placeholderText)
     }
 end
 
+-- ============ ASSET IMAGE PREVIEW ============
+-- Normalisasi referensi aset gambar -> "rbxassetid://ID" (atau nil)
+local function normalizeImageRef(ref)
+    ref = tostring(ref or "")
+    if ref == "" then return nil end
+    local id = ref:match("rbxassetid://(%d+)") or ref:match("[?&]id=(%d+)") or ref:match("^(%d+)$")
+    if id then return "rbxassetid://" .. id end
+    if ref:find("^rbxasset://") or ref:find("^rbxthumb://") then return ref end
+    return nil
+end
+
+local AssetPreviewInline = nil   -- preview di dalam card (panel kanan)
+local AssetFloat = nil           -- jendela preview melayang, posisi bebas
+
+local function AttachImagePreview(cardFrame, heightPx)
+    local Box = Instance.new("Frame")
+    Box.Size = UDim2.new(1, 0, 0, heightPx or 150)
+    Box.BorderSizePixel = 0
+    Box.ClipsDescendants = true
+    Box.Parent = cardFrame
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, UI.Rounded and 10 or 0)
+    Corner.Parent = Box
+    RegisterCanvasRadius(Corner, 10)
+    local Stroke = Instance.new("UIStroke")
+    Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    Stroke.Thickness = 1
+    Stroke.Transparency = 0.22
+    Stroke.Parent = Box
+    local Img = Instance.new("ImageLabel")
+    Img.Size = UDim2.new(1, -16, 1, -16)
+    Img.Position = UDim2.fromOffset(8, 8)
+    Img.BackgroundTransparency = 1
+    Img.ScaleType = Enum.ScaleType.Fit
+    Img.Image = ""
+    Img.Parent = Box
+    local Hint = Instance.new("TextLabel")
+    Hint.Size = UDim2.fromScale(1, 1)
+    Hint.BackgroundTransparency = 1
+    Hint.Font = Enum.Font.GothamMedium
+    Hint.TextSize = 14
+    Hint.TextWrapped = true
+    Hint.Text = "Pilih entry bergambar (DECAL / TEX / IMAGE / MESH) untuk preview"
+    Hint.Parent = Box
+    RegisterCanvasTheme(Box, function(theme)
+        Box.BackgroundColor3 = theme.PanelBg
+        Stroke.Color = theme.Stroke
+        Hint.TextColor3 = theme.TextMuted
+    end)
+    return {
+        Set = function(_, ref, note)
+            Img.Image = ref or ""
+            Hint.Visible = (ref == nil)
+            Hint.Text = note or "Entry ini tidak punya gambar yang bisa dipreview"
+        end,
+    }
+end
+
+local function EnsureAssetFloat()
+    if AssetFloat and AssetFloat.Gui and AssetFloat.Gui.Parent then return AssetFloat end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "R8_DV_AssetPreview"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 999
+    gui.IgnoreGuiInset = true
+    local parent = (F.gethui and safe(F.gethui)) or CoreGui
+    gui.Parent = parent
+    local fr = Instance.new("Frame")
+    fr.Size = UDim2.fromOffset(200, 200)
+    fr.Position = UDim2.fromScale(0.7, 0.1)
+    fr.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+    fr.BackgroundTransparency = 0.1
+    fr.BorderSizePixel = 0
+    fr.Active = true
+    fr.Visible = false
+    fr.Parent = gui
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 10) c.Parent = fr
+    local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(176, 190, 216) st.Transparency = 0.3 st.Parent = fr
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -12, 0, 20)
+    title.Position = UDim2.fromOffset(6, 2)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+    title.TextColor3 = Color3.fromRGB(230, 236, 248)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    title.Text = "Asset Preview (drag untuk pindah)"
+    title.Parent = fr
+    local img = Instance.new("ImageLabel")
+    img.Size = UDim2.new(1, -12, 1, -30)
+    img.Position = UDim2.fromOffset(6, 24)
+    img.BackgroundTransparency = 1
+    img.ScaleType = Enum.ScaleType.Fit
+    img.Image = ""
+    img.Parent = fr
+    -- drag bebas (mouse & touch)
+    local dragging, dragStart, startPos = false, nil, nil
+    fr.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, input.Position, fr.Position
+        end
+    end)
+    fr.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    S.Conns[#S.Conns + 1] = UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            fr.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    AssetFloat = {Gui = gui, Frame = fr, Img = img, Title = title}
+    return AssetFloat
+end
+
+-- dipanggil saat entry aset dipilih
+function S.ShowAssetPreview(a)
+    local ref = a and normalizeImageRef(a.img)
+    local note = (a and a.img and not ref) and ("Format gambar tidak dikenali: " .. tostring(a.img)) or nil
+    if AssetPreviewInline then AssetPreviewInline:Set(ref, note) end
+    if AssetFloat and AssetFloat.Gui and AssetFloat.Gui.Parent then
+        AssetFloat.Img.Image = ref or ""
+        AssetFloat.Title.Text = a and (a.tag .. " - " .. a.path) or "Asset Preview"
+    end
+end
+
 -- Two-way Spy State Sync
 local syncingSpyFlags = false
 local function SetSpyPaused(state)
@@ -2162,6 +2290,7 @@ local function RefreshAssetsUI()
         function(a) return curAsset == a end,
         function(a)
             curAsset = a
+            S.ShowAssetPreview(a)
             local detail = "Entry: " .. a.info .. "\nPath:  " .. a.path
             if AssetViewerUI then
                 AssetViewerUI:SetText(detail)
@@ -2221,6 +2350,7 @@ feature("Visuals", "Assets")({
         -- FIX: Tag "assets" agar progress hanya update bar di tab ini
         AttachExportProgressBar(asDetailFrame, "Ready to scan & export assets", "assets")
         AssetViewerUI = AttachCodeViewer(asDetailFrame, 185, "Click any scanned entry on the left to inspect & auto-copy...")
+        AssetPreviewInline = AttachImagePreview(asDetailFrame, 150)
 
         AsDetailCard:Button("Copy Selected Entry", "COPY", "Check", function()
             if not curAsset then say("Select an entry first") return end
@@ -2230,6 +2360,24 @@ feature("Visuals", "Assets")({
             else
                 say("Clipboard unsupported in this executor")
             end
+        end)
+        AsDetailCard:Toggle("Floating Asset Preview", "AsFloatOn", false, function(on)
+            local fl = EnsureAssetFloat()
+            fl.Frame.Visible = (on == true)
+            if on and curAsset then S.ShowAssetPreview(curAsset) end
+            say("Floating preview: " .. (on and "ON (drag untuk pindah)" or "OFF"))
+        end)
+        AsDetailCard:Slider("Preview Position X", "AsFloatX", 0, 100, 70, "%", function(v)
+            local fl = EnsureAssetFloat()
+            fl.Frame.Position = UDim2.new(v / 100, 0, fl.Frame.Position.Y.Scale, fl.Frame.Position.Y.Offset)
+        end)
+        AsDetailCard:Slider("Preview Position Y", "AsFloatY", 0, 100, 10, "%", function(v)
+            local fl = EnsureAssetFloat()
+            fl.Frame.Position = UDim2.new(fl.Frame.Position.X.Scale, fl.Frame.Position.X.Offset, v / 100, 0)
+        end)
+        AsDetailCard:Slider("Preview Size", "AsFloatSize", 80, 480, 200, "px", function(v)
+            local fl = EnsureAssetFloat()
+            fl.Frame.Size = UDim2.fromOffset(v, v)
         end)
         -- FIX: Gunakan assetProgCb agar progress hanya tampil di bar tab Assets
         local assetProgCb = MakeProgressCb("assets")
@@ -2399,6 +2547,7 @@ task.spawn(function()
 end)
 
 function S.Destroy()
+    if AssetFloat and AssetFloat.Gui then pcall(function() AssetFloat.Gui:Destroy() end) end
     for _, c in ipairs(S.Conns) do pcall(function() c:Disconnect() end) end
     for _, c in pairs(watched) do pcall(function() c:Disconnect() end) end
     S.OnPacket = nil
