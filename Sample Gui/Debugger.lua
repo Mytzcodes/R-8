@@ -408,28 +408,54 @@ function S.Source(inst)
     return nil, "failed"
 end
 
--- Save scripts into 3 separate folders: Roblox / Game / Custom
+-- FIX: SaveScripts sekarang SKIP kategori "Roblox" (package dasar Roblox).
+-- Hanya simpan "Game" (script map/game) dan "Custom" (nil/executor-made).
+-- Bytecode binary (&/00/00...) di-encode ke hex string agar bisa dibaca, bukan raw binary.
+local function bytesToHex(s)
+    -- Convert binary string ke hex dump yang readable
+    local out, lineLen = {}, 0
+    out[#out + 1] = "-- [BYTECODE HEX DUMP]\n"
+    for i = 1, #s do
+        out[#out + 1] = string.format("%02X ", s:byte(i))
+        lineLen += 1
+        if lineLen >= 16 then
+            out[#out + 1] = "\n"
+            lineLen = 0
+        end
+    end
+    return table.concat(out)
+end
+
 function S.SaveScripts(list, cb, progCb)
     list = list or S.Scripts
-    local snap = {table.unpack(list)}
+    -- FIX: Filter keluar script Roblox sebelum proses
+    local snap = {}
+    for _, s in ipairs(list) do
+        if s.cat ~= "Roblox" then
+            snap[#snap + 1] = s
+        end
+    end
     local notifyProg = progCb or S.OnProgress
     task.spawn(function()
         local total = math.max(#snap, 1)
-        if notifyProg then notifyProg(2, ("Saving scripts (0/%d)..."):format(#snap)) end
+        if notifyProg then notifyProg(2, ("Saving scripts (0/%d) — Roblox package skipped..."):format(#snap)) end
         local okc, failc, folders = 0, 0, {}
         for i, s in ipairs(snap) do
             local src, how = S.Source(s.inst)
-            local sub = ({Roblox = "Scripts_Roblox", Game = "Scripts_GameMap", Custom = "Scripts_Custom"})[s.cat]
+            local sub = ({Game = "Scripts_GameMap", Custom = "Scripts_Custom"})[s.cat] or "Scripts_Other"
             local base = clean(s.path):sub(1, 120) .. "_" .. i
             if src and how ~= "bytecode" then
+                -- Source terbaca normal
                 okc += 1
                 S.write(sub .. "/" .. base .. ".lua", "-- " .. s.path .. " (" .. s.class .. ", " .. how .. ")\n" .. src)
             elseif src then
+                -- FIX: Bytecode binary -> simpan sebagai hex dump readable, bukan raw binary
                 okc += 1
-                S.write(sub .. "/" .. base .. ".enc", src)
+                local hexDump = bytesToHex(src)
+                S.write(sub .. "/" .. base .. "_bytecode.txt", "-- " .. s.path .. " (" .. s.class .. ", bytecode/encrypted)\n" .. hexDump)
             else
                 failc += 1
-                S.write(sub .. "/" .. base .. ".enc", "-- " .. s.path .. "\n-- decompile failed: kept as encrypted placeholder")
+                S.write(sub .. "/" .. base .. ".txt", "-- " .. s.path .. "\n-- decompile failed: source inaccessible")
             end
             folders[sub] = true
             local pct = math.floor(5 + (i / total) * 90)
@@ -441,7 +467,7 @@ function S.SaveScripts(list, cb, progCb)
         task.wait(0.3)
         local fl = {}
         for k in pairs(folders) do fl[#fl + 1] = ROOT .. "/" .. k end
-        local doneTxt = ("Scripts ok=%d failed(.enc)=%d | %s"):format(okc, failc, table.concat(fl, ", "))
+        local doneTxt = ("Scripts ok=%d failed=%d | Roblox package excluded | %s"):format(okc, failc, table.concat(fl, ", "))
         if notifyProg then notifyProg(100, doneTxt) end
         if cb then cb(doneTxt) end
     end)
@@ -561,22 +587,36 @@ function S.ExportAll(cb, progCb)
             add("Packets/remote_list.txt", table.concat(rl, "\n"))
             step(15, ("1/4 Packets & %d remotes indexed"):format(#rl))
 
-            local list = S.ScanScripts()
+            -- FIX: Filter keluar Roblox package dari export
+            local rawList = S.ScanScripts()
+            local list = {}
+            local skippedRoblox = 0
+            for _, s in ipairs(rawList) do
+                if s.cat ~= "Roblox" then
+                    list[#list + 1] = s
+                else
+                    skippedRoblox += 1
+                end
+            end
             local totalSc = #list
-            step(16, ("2/4 Decompiling & exporting scripts (0/%d)..."):format(totalSc))
-            local dirs = {Roblox = "Scripts_Roblox", Game = "Scripts_GameMap", Custom = "Scripts_Custom"}
+            step(16, ("2/4 Decompiling & exporting scripts (0/%d) — %d Roblox package skipped..."):format(totalSc, skippedRoblox))
+            local dirs = {Game = "Scripts_GameMap", Custom = "Scripts_Custom"}
             for i, s in ipairs(list) do
                 local src, how = S.Source(s.inst)
-                local base = dirs[s.cat] .. "/" .. clean(s.path):sub(1, 120) .. "_" .. i
+                local dirKey = dirs[s.cat] or "Scripts_Other"
+                local base = dirKey .. "/" .. clean(s.path):sub(1, 120) .. "_" .. i
                 if src and how ~= "bytecode" then
                     local c, e = S.CompileCheck(src)
                     local tag = c == nil and "n/a" or (c and "ok" or ("FAIL: " .. tostring(e)))
                     add(base .. ".lua", "-- " .. s.path .. " (" .. s.class .. ", " .. how .. ", compile:" .. tag .. ")\n" .. src)
                     stats.sc += 1 if c == false then stats.scBad += 1 end
                 elseif src then
-                    add(base .. ".enc", src) stats.scEnc += 1
+                    -- FIX: Bytecode binary -> hex dump readable, bukan raw .enc binary
+                    local hexDump = bytesToHex(src)
+                    add(base .. "_bytecode.txt", "-- " .. s.path .. " (" .. s.class .. ", bytecode/encrypted)\n" .. hexDump)
+                    stats.scEnc += 1
                 else
-                    add(base .. ".enc", "-- " .. s.path .. "\n-- decompile failed") stats.scEnc += 1
+                    add(base .. ".txt", "-- " .. s.path .. "\n-- decompile failed") stats.scEnc += 1
                 end
                 local pct = math.floor(16 + (i / math.max(totalSc, 1)) * 58)
                 if i % 5 == 0 or i == totalSc then
@@ -592,7 +632,7 @@ function S.ExportAll(cb, progCb)
             for _, a in ipairs(S.ScanAssets()) do ao[#ao + 1] = a.info .. " @ " .. a.path end
             stats.assets = #ao
             add("Assets/assets.txt", table.concat(ao, "\n"))
-            add("README.txt", ("R&8_DV Debugger export %s\nPackets ok=%d encrypted=%d\nScripts ok=%d (compile-fail=%d) encrypted/failed=%d\nAssets=%d\nFolders: Scripts_Roblox (bawaan), Scripts_GameMap (map game), Scripts_Custom (nil/buatan)\n"):format(stamp, stats.pk, stats.pkEnc, stats.sc, stats.scBad, stats.scEnc, stats.assets))
+            add("README.txt", ("R&8_DV Debugger export %s\nPackets ok=%d encrypted=%d\nScripts ok=%d (compile-fail=%d) bytecode/failed=%d\nAssets=%d\nFolders: Scripts_GameMap (script game/map), Scripts_Custom (nil/executor-made)\nNote: Scripts_Roblox (package dasar) TIDAK diexport — hanya game & custom scripts.\nBytecode script disimpan sebagai hex dump (_bytecode.txt), bukan raw binary.\n"):format(stamp, stats.pk, stats.pkEnc, stats.sc, stats.scBad, stats.scEnc, stats.assets))
             step(85, ("3/4 Assets exported (%d entries)"):format(#ao))
 
             step(86, "4/4 Zipping " .. #files .. " files...")
@@ -805,14 +845,22 @@ local function say(msg)
     RefreshDashboardStats()
 end
 
+-- FIX: Tiap progress bar punya state sendiri (tag-based), tidak lagi shared global.
+-- Ini mencegah bug progress muncul di semua tab sekaligus.
 local ProgressBars = {}
 local CurrentExportPct = 0
 local CurrentExportStage = "Idle — Ready to Export"
 
+-- ActiveBarTag menentukan bar mana yang sedang di-update.
+-- Di-set sebelum memanggil SetExportProgress dari tiap operasi.
+local ActiveBarTag = nil
+
 local SMOOTH_BAR_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local SMOOTH_BTN_TWEEN = TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-local function SetExportProgress(pct, stageText)
+local function SetExportProgress(pct, stageText, barTag)
+    -- Gunakan barTag argumen jika ada, lalu fallback ke ActiveBarTag, lalu update semua
+    local targetTag = barTag or ActiveBarTag
     CurrentExportPct = math.clamp(math.floor((tonumber(pct) or 0) + 0.5), 0, 100)
     if stageText and stageText ~= "" then
         CurrentExportStage = tostring(stageText):gsub("\n", " | ")
@@ -820,7 +868,8 @@ local function SetExportProgress(pct, stageText)
     local onAcc = GetOnFillColor(ActiveTheme.Accent)
     local isBusyOrDone = (CurrentExportPct > 0)
     for _, bar in ipairs(ProgressBars) do
-        if bar.Holder and bar.Holder.Parent then
+        -- FIX: Hanya update bar yang tag-nya cocok, atau semua jika tidak ada tag aktif
+        if bar.Holder and bar.Holder.Parent and (not targetTag or bar.Tag == targetTag) then
             bar.StageLbl.Text = CurrentExportStage
             bar.PctTxt.Text = tostring(CurrentExportPct) .. "%"
             bar.PctPill.BackgroundColor3 = isBusyOrDone and ActiveTheme.Accent or ActiveTheme.ControlBg
@@ -839,7 +888,12 @@ local function SetExportProgress(pct, stageText)
 end
 S.OnProgress = SetExportProgress
 
-local function AttachExportProgressBar(cardFrame, initialStageText)
+-- Helper: buat progress callback yang terikat ke satu bar tag tertentu
+local function MakeProgressCb(tag)
+    return function(pct, msg) SetExportProgress(pct, msg, tag) end
+end
+
+local function AttachExportProgressBar(cardFrame, initialStageText, barTag)
     local Holder = Instance.new("TextButton")
     Holder.Size = UDim2.new(1, 0, 0, 68)
     Holder.BorderSizePixel = 0
@@ -937,7 +991,8 @@ local function AttachExportProgressBar(cardFrame, initialStageText)
         PctTxt = PctTxt,
         Track = Track,
         Fill = Fill,
-        Hovered = false
+        Hovered = false,
+        Tag = barTag or false,  -- FIX: simpan tag biar bisa difilter per-tab
     }
     table.insert(ProgressBars, barEntry)
 
@@ -1668,16 +1723,18 @@ feature("Target", "Packets")({
             Subtitle = "Export decoded (.txt) & encrypted (.enc) packet logs"
         })
         local manageFrame = GetLastFrame(CurrentRightPage())
-        AttachExportProgressBar(manageFrame, "Ready to save packet logs")
+        -- FIX: Tag "packets" agar progress hanya update bar di tab ini
+        AttachExportProgressBar(manageFrame, "Ready to save packet logs", "packets")
+        local packetProgCb = MakeProgressCb("packets")
 
         ManageCard:Button("Save Filtered Packets", "SHOWN", "Check", function()
             say("Saving filtered packets...")
             local filtered = S.Filter(UI:GetValue("PkSearch") or "", UI:GetValue("PkDir") or "ALL")
-            S.SavePackets(filtered, say, SetExportProgress)
+            S.SavePackets(filtered, say, packetProgCb)
         end)
         ManageCard:Button("Save All Packets", "SAVE ALL", "Collect", function()
             say("Saving all packets...")
-            S.SavePackets(nil, say, SetExportProgress)
+            S.SavePackets(nil, say, packetProgCb)
         end)
         ManageCard:Button("Clear Captured Packets", "CLEAR", "Minimize", function()
             S.Packets = {}
@@ -1788,7 +1845,9 @@ feature("Layers", "Scripts")({
         })
         local decompFrame = GetLastFrame(CurrentRightPage())
         AttachStatusBanner(decompFrame, "Select a script to decompile")
-        AttachExportProgressBar(decompFrame, "Ready to decompile & save scripts")
+        -- FIX: Tag "scripts" agar progress hanya update bar di tab ini
+        AttachExportProgressBar(decompFrame, "Ready to decompile & save scripts (Roblox package excluded)", "scripts")
+        local scriptProgCb = MakeProgressCb("scripts")
         ScriptViewerUI = AttachCodeViewer(decompFrame, 195, "Click any LocalScript or ModuleScript on the left to decompile...")
 
         DecompCard:Button("Copy Source to Clipboard", "COPY", "Check", function()
@@ -1803,14 +1862,15 @@ feature("Layers", "Scripts")({
         end)
         DecompCard:Button("Save Selected Script", "SAVE 1", "Layers", function()
             if not curS then say("Select a script first") return end
+            if curS.cat == "Roblox" then say("Skip: ini Roblox package — hanya Game & Custom yang disimpan") return end
             say("Saving " .. curS.name .. "...")
-            S.SaveScripts({curS}, say, SetExportProgress)
+            S.SaveScripts({curS}, say, scriptProgCb)
         end)
         DecompCard:Button("Save All Shown Scripts", "SAVE ALL", "Collect", function()
             local list = GetShownScripts()
             if #list == 0 then say("No scripts match current filter") return end
-            say("Saving " .. tostring(#list) .. " scripts to Roblox/GameMap/Custom folders...")
-            S.SaveScripts(list, say, SetExportProgress)
+            say("Saving " .. tostring(#list) .. " scripts — Roblox package will be excluded...")
+            S.SaveScripts(list, say, scriptProgCb)
         end)
         EnhanceCardButtons(decompFrame)
     end)
@@ -1903,7 +1963,8 @@ feature("Visuals", "Assets")({
         })
         local asDetailFrame = GetLastFrame(CurrentRightPage())
         AttachStatusBanner(asDetailFrame, "Ready to scan assets & data")
-        AttachExportProgressBar(asDetailFrame, "Ready to scan & export assets")
+        -- FIX: Tag "assets" agar progress hanya update bar di tab ini
+        AttachExportProgressBar(asDetailFrame, "Ready to scan & export assets", "assets")
         AssetViewerUI = AttachCodeViewer(asDetailFrame, 185, "Click any scanned entry on the left to inspect & auto-copy...")
 
         AsDetailCard:Button("Copy Selected Entry", "COPY", "Check", function()
@@ -1915,18 +1976,20 @@ feature("Visuals", "Assets")({
                 say("Clipboard unsupported in this executor")
             end
         end)
+        -- FIX: Gunakan assetProgCb agar progress hanya tampil di bar tab Assets
+        local assetProgCb = MakeProgressCb("assets")
         AsDetailCard:Button("Save Shown Entries (.txt)", "SAVE", "Collect", function()
             local shown = GetShownAssets()
             if #shown == 0 then say("No asset entries to save — run Scan first") return end
-            SetExportProgress(25, "Formatting " .. tostring(#shown) .. " asset entries...")
+            assetProgCb(25, "Formatting " .. tostring(#shown) .. " asset entries...")
             local lines = {}
             for _, a in ipairs(shown) do
                 lines[#lines + 1] = a.info .. " @ " .. a.path
             end
-            SetExportProgress(75, "Writing asset entries to workspace...")
+            assetProgCb(75, "Writing asset entries to workspace...")
             S.write("Assets/assets_" .. os.date("%H%M%S") .. ".txt", table.concat(lines, "\n"), function(ok, p)
                 local doneMsg = ok and ("Saved " .. tostring(#lines) .. " entries -> " .. p) or ("Save failed: " .. tostring(p))
-                SetExportProgress(ok and 100 or 0, doneMsg)
+                assetProgCb(ok and 100 or 0, doneMsg)
                 say(doneMsg)
             end)
         end)
@@ -2013,12 +2076,14 @@ feature("Misc", "Export & Misc")({
         })
         local expFrame = GetLastFrame(CurrentCenterPage())
         AttachStatusBanner(expFrame, ("Workspace folder: <executor>/%s/"):format(ROOT))
-        AttachExportProgressBar(expFrame, "Idle — Click Export ALL to build .zip")
+        -- FIX: Tag "exportall" agar progress hanya update bar di tab Export & Misc
+        AttachExportProgressBar(expFrame, "Idle — Click Export ALL to build .zip (Roblox package excluded)", "exportall")
+        local exportAllProgCb = MakeProgressCb("exportall")
 
         ExportCard:Button("Export ALL (ZIP Archive)", "EXPORT", "Collect", function()
-            SetExportProgress(1, "Starting full ZIP export...")
+            exportAllProgCb(1, "Starting full ZIP export — Roblox package excluded...")
             say("Starting full ZIP export...")
-            S.ExportAll(say, SetExportProgress)
+            S.ExportAll(say, exportAllProgCb)
         end)
         ExportCard:Button("Copy Save Directory Name", "COPY", "Check", function()
             if F.setclip then
