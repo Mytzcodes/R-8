@@ -495,7 +495,7 @@ local function scBuildItems()
         if type(id) == "number" and type(it) == "table" and it.kind == "cloth"
             and type(it.slot) == "string" and type(it.name) == "string"
             and not it.name:find(" Seed$") then
-            items[#items + 1] = { id = id, name = it.name, lname = it.name:lower(), slot = it.slot }
+            items[#items + 1] = { id = id, name = it.name, lname = it.name:lower(), slot = it.slot, atlas = it.atlas }
         end
     end
     table.sort(items, function(a, b)
@@ -789,6 +789,377 @@ local function scReset()
 end
 
 -- =========================================================================
+-- DAFTAR ITEM VISUAL (tanpa GUI baru: dipasang di dalam kartu menu ini)
+--  * Ikon dirender pakai modul ItemIcon milik game sendiri, jadi gambarnya
+--    adalah sprite sheet rbxassetid asli. ID sheet tampil di info item.
+--  * Search (nama / ID item / nama atlas / rbxassetid sheet), filter slot,
+--    scroll, tap 1x = info, tap 2x = pakai (visual saja).
+--  * Strip "Dipakai sekarang": lihat item yang sedang dipakai, tap = lepas.
+--  * Shortcut UNWEAR ALL: lepas semua item di visual.
+-- =========================================================================
+local SC_PAGE = 90
+local SC_SLOT_ORDER = { "hat", "hair", "face", "chest", "shirt", "pants", "feet", "back", "hand" }
+local SC_FILTER_NAMES = { "Semua", "Head (hat)", "Hair", "Mask (face)", "Chest", "Shirt", "Pants", "Feet", "Back", "Hand" }
+local SC_FILTER_SLOT = {
+    ["Head (hat)"] = "hat", ["Hair"] = "hair", ["Mask (face)"] = "face", ["Chest"] = "chest",
+    ["Shirt"] = "shirt", ["Pants"] = "pants", ["Feet"] = "feet", ["Back"] = "back", ["Hand"] = "hand",
+}
+local SC_CARD_TITLE = "Daftar Item Visual"
+local SC_TXT = Color3.fromRGB(225, 225, 225)
+local SC_DIM = Color3.fromRGB(140, 140, 145)
+local SC_CELL_BG = Color3.fromRGB(30, 30, 34)
+
+SC.UI = { Matches = {}, Shown = 0, Filter = "Semua", Search = "", LastId = nil, LastT = 0, Built = false, Sig = "" }
+local AtlasIdCache = {}
+
+local function scGetMods()
+    if SC.Mods then return SC.Mods end
+    local sh = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 5)
+    if not sh then return {} end
+    local mods = {}
+    local okI, I = pcall(function() return require(sh:WaitForChild("ItemIcon", 5)) end)
+    local okA, A = pcall(function() return require(sh:WaitForChild("Assets", 5)) end)
+    if okI and type(I) == "table" then mods.Icon = I end
+    if okA and type(A) == "table" then mods.Assets = A end
+    SC.Mods = mods
+    return mods
+end
+
+local function scAtlasId(atlas)
+    if not atlas then return "?" end
+    if AtlasIdCache[atlas] then return AtlasIdCache[atlas] end
+    local A = scGetMods().Assets
+    local ok, v = pcall(function() return A.Atlas[atlas] end)
+    local s = (ok and v) and tostring(v) or "?"
+    AtlasIdCache[atlas] = s
+    return s
+end
+
+local function scSetInfo(text)
+    local U = SC.UI
+    if U.Info then U.Info.Text = text end
+end
+
+-- satu sel ikon (dipakai di daftar dan di strip "dipakai sekarang")
+local function scMakeCell(parent, id, labelText, size, order, onTap)
+    local btn = Instance.new("TextButton")
+    btn.Name = "SC_Cell"
+    btn.Text = ""
+    btn.AutoButtonColor = true
+    btn.BackgroundColor3 = SC_CELL_BG
+    btn.BorderSizePixel = 0
+    btn.LayoutOrder = order or 0
+    btn.Size = UDim2.fromOffset(size, size)
+    btn.Parent = parent
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = btn
+
+    if id then
+        local I = scGetMods().Icon
+        if I then
+            local okI, icon = pcall(I.new, btn, UDim2.fromScale(0.7, 0.7), 2)
+            if okI and type(icon) == "table" and icon.frame then
+                icon.frame.AnchorPoint = Vector2.new(0.5, 0)
+                icon.frame.Position = UDim2.fromScale(0.5, 0.06)
+                pcall(I.set, icon, id)
+            end
+        end
+    end
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.AnchorPoint = Vector2.new(0, 1)
+    lbl.Position = UDim2.fromScale(0, 1)
+    lbl.Size = UDim2.new(1, 0, 0, 14)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 9
+    lbl.TextColor3 = id and SC_TXT or SC_DIM
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.Text = labelText or ""
+    lbl.ZIndex = 3
+    lbl.Parent = btn
+
+    if onTap then btn.Activated:Connect(onTap) end
+    return btn
+end
+
+-- siapkan hook + tabel worn sebelum mengubah apa pun
+local function scPrepare()
+    local worn, err = scFindWorn()
+    if not worn then
+        scSetInfo("Gagal: " .. tostring(err))
+        warn("[R&8_DV] Daftar item: " .. tostring(err))
+        return false
+    end
+    if not scBuildItems() then scSetInfo("Gagal: Shared.ItemDB tidak bisa dibaca"); return false end
+    if not scHook() then scSetInfo("Gagal: hook Net.wear.send tidak terpasang"); return false end
+    scEnsureLoop()
+    return true
+end
+
+local scRefreshWorn
+
+local function scUnwearSlot(slot)
+    if not scPrepare() then return end
+    scMutate(function(W) W[slot] = nil end)
+    scRefreshWorn()
+end
+
+local function scUnwearAll()
+    if not scPrepare() then return end
+    scMutate(function(W)
+        for slot in pairs(W) do W[slot] = nil end
+    end)
+    scRefreshWorn()
+    scSetInfo("Semua item dilepas di visual (server tetap menerima pakaian asli)")
+end
+
+local function scWearOne(id)
+    if not scPrepare() then return end
+    scMutate(function(W) scWearInto(W, id) end)
+    scRefreshWorn()
+    local it = SC.DB[id]
+    scSetInfo("Dipakai: " .. tostring(it and it.name) .. " (" .. id .. ")")
+end
+
+scRefreshWorn = function()
+    local U = SC.UI
+    local frame = U.WornFrame
+    if not frame then return end
+    for _, c in ipairs(frame:GetChildren()) do
+        if c:IsA("GuiButton") then c:Destroy() end
+    end
+    local W = SC.Worn
+    local total = 0
+    for i, slot in ipairs(SC_SLOT_ORDER) do
+        local id = W and W[slot]
+        if id and not (SC.DB and SC.DB[id]) then id = nil end
+        if id then total = total + 1 end
+        scMakeCell(frame, id, id and SC.DB[id].name or slot, 46, i, function()
+            if id then scUnwearSlot(slot) end
+        end)
+    end
+    if U.WornTitle then
+        U.WornTitle.Text = "Dipakai sekarang: " .. total .. " item (tap = lepas)"
+    end
+end
+
+local function scOnTap(e)
+    local U = SC.UI
+    local now = os.clock()
+    if U.LastId == e.id and now - U.LastT < 0.45 then
+        U.LastId = nil
+        scWearOne(e.id)
+        return
+    end
+    U.LastId, U.LastT = e.id, now
+    scSetInfo(string.format("%s | ID %d | slot %s | sheet rbxassetid://%s  (tap 2x = pakai)",
+        e.name, e.id, e.slot, scAtlasId(e.atlas)))
+end
+
+local function scRenderMore()
+    local U = SC.UI
+    if not U.List then return end
+    local from, to = U.Shown + 1, math.min(#U.Matches, U.Shown + SC_PAGE)
+    for i = from, to do
+        local e = U.Matches[i]
+        scMakeCell(U.List, e.id, e.name, 66, i, function() scOnTap(e) end)
+    end
+    U.Shown = math.max(U.Shown, to)
+end
+
+local function scFilterItems()
+    local U = SC.UI
+    local q = U.Search:lower()
+    local slot = SC_FILTER_SLOT[U.Filter]
+    local numeric = q:match("^%d+$") and #q >= 6
+    local out = {}
+    for _, e in ipairs(SC.Items) do
+        if not slot or e.slot == slot then
+            if q == "" or e.lname:find(q, 1, true) or tostring(e.id):find(q, 1, true)
+                or (e.atlas and tostring(e.atlas):lower():find(q, 1, true))
+                or (numeric and scAtlasId(e.atlas):find(q, 1, true)) then
+                out[#out + 1] = e
+            end
+        end
+    end
+    return out
+end
+
+local function scRefilter()
+    local U = SC.UI
+    if not (U.Built and U.List and SC.Items) then return end
+    for _, c in ipairs(U.List:GetChildren()) do
+        if c:IsA("GuiButton") then c:Destroy() end
+    end
+    U.Matches = scFilterItems()
+    U.Shown = 0
+    U.List.CanvasPosition = Vector2.new(0, 0)
+    scRenderMore()
+    if U.ListTitle then
+        U.ListTitle.Text = string.format("Item: %d ditemukan (scroll untuk lainnya)", #U.Matches)
+    end
+end
+
+local function scNewLabel(parent, y, h, size, color)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.fromOffset(0, y)
+    l.Size = UDim2.new(1, 0, 0, h)
+    l.Font = Enum.Font.GothamMedium
+    l.TextSize = size
+    l.TextColor3 = color
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextWrapped = true
+    l.Parent = parent
+    return l
+end
+
+local function scBuildUi(host)
+    local U = SC.UI
+    if U.Built then return end
+    if not scBuildItems() then error("ItemDB tidak bisa dibaca") end
+
+    local root = Instance.new("Frame")
+    root.Name = "SC_VisualList"
+    root.BackgroundTransparency = 1
+    root.BorderSizePixel = 0
+    root.Size = UDim2.new(1, 0, 0, 430)
+    root.LayoutOrder = 9999
+    root.Parent = host
+    U.Root = root
+
+    U.Info = scNewLabel(root, 0, 32, 11, SC_TXT)
+    U.Info.Text = "Tap 1x pada item = lihat info + rbxassetid. Tap 2x = pakai di visual."
+
+    U.WornTitle = scNewLabel(root, 36, 14, 11, SC_DIM)
+    U.WornTitle.Text = "Dipakai sekarang"
+
+    local worn = Instance.new("ScrollingFrame")
+    worn.Name = "SC_Worn"
+    worn.BackgroundTransparency = 1
+    worn.BorderSizePixel = 0
+    worn.Position = UDim2.fromOffset(0, 52)
+    worn.Size = UDim2.new(1, 0, 0, 50)
+    worn.ScrollBarThickness = 3
+    worn.ScrollingDirection = Enum.ScrollingDirection.X
+    worn.AutomaticCanvasSize = Enum.AutomaticSize.X
+    worn.CanvasSize = UDim2.new()
+    worn.Parent = root
+    local wl = Instance.new("UIListLayout")
+    wl.FillDirection = Enum.FillDirection.Horizontal
+    wl.Padding = UDim.new(0, 4)
+    wl.SortOrder = Enum.SortOrder.LayoutOrder
+    wl.Parent = worn
+    U.WornFrame = worn
+
+    U.ListTitle = scNewLabel(root, 108, 14, 11, SC_DIM)
+
+    local list = Instance.new("ScrollingFrame")
+    list.Name = "SC_List"
+    list.BackgroundTransparency = 1
+    list.BorderSizePixel = 0
+    list.Position = UDim2.fromOffset(0, 126)
+    list.Size = UDim2.new(1, 0, 1, -126)
+    list.ScrollBarThickness = 4
+    list.ScrollingDirection = Enum.ScrollingDirection.Y
+    list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    list.CanvasSize = UDim2.new()
+    list.Parent = root
+    local grid = Instance.new("UIGridLayout")
+    grid.CellSize = UDim2.fromOffset(66, 66)
+    grid.CellPadding = UDim2.fromOffset(4, 4)
+    grid.SortOrder = Enum.SortOrder.LayoutOrder
+    grid.Parent = list
+    U.List = list
+
+    list:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        if U.Shown < #U.Matches
+            and list.CanvasPosition.Y + list.AbsoluteWindowSize.Y >= list.AbsoluteCanvasSize.Y - 120 then
+            scRenderMore()
+        end
+    end)
+
+    U.Built = true
+    scRefilter()
+    scRefreshWorn()
+    task.spawn(function() pcall(scFindWorn); scRefreshWorn() end)
+
+    -- polling ringan: search, filter, dan perubahan item yang dipakai
+    task.spawn(function()
+        while U.Built and root.Parent do
+            task.wait(0.35)
+            local q = tostring(getValue("SC_Search", "") or "")
+            local f = tostring(getValue("SC_Filter", U.Filter) or U.Filter)
+            if SC_FILTER_SLOT[f] or f == "Semua" then
+                if f ~= U.Filter then U.Filter = f; U.Dirty = true end
+            end
+            if q ~= U.Search then U.Search = q; U.Dirty = true end
+            if U.Dirty then U.Dirty = false; pcall(scRefilter) end
+            if SC.Worn then
+                local parts = {}
+                for _, slot in ipairs(SC_SLOT_ORDER) do parts[#parts + 1] = slot .. "=" .. tostring(SC.Worn[slot]) end
+                local sig = table.concat(parts, ",")
+                if sig ~= U.Sig then U.Sig = sig; pcall(scRefreshWorn) end
+            end
+        end
+    end)
+end
+
+-- cari tempat pemasangan di dalam kartu (tanpa membuat ScreenGui baru)
+local function scTryHost(card)
+    for _, k in ipairs({ "Content", "Body", "Container", "Holder", "Frame", "Instance", "Inner", "Root" }) do
+        local ok, v = pcall(function() return card[k] end)
+        if ok and typeof(v) == "Instance" and v:IsA("GuiObject") then return v end
+    end
+    return nil
+end
+
+local function scFindHostByTitle()
+    local roots = {}
+    pcall(function() if gethui then roots[#roots + 1] = gethui() end end)
+    pcall(function() roots[#roots + 1] = game:GetService("CoreGui") end)
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pg then roots[#roots + 1] = pg end
+    for _, r in ipairs(roots) do
+        local okD, desc = pcall(function() return r:GetDescendants() end)
+        if okD then
+            for _, d in ipairs(desc) do
+                if d:IsA("TextLabel") and d.Text == SC_CARD_TITLE and not d:IsDescendantOf(SC.UI.Root or d) then
+                    local p = d.Parent
+                    for _ = 1, 4 do
+                        if not p then break end
+                        if p:FindFirstChildOfClass("UIListLayout") and p:IsA("GuiObject") then return p end
+                        p = p.Parent
+                    end
+                    return d.Parent
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function scLaunchUi(card)
+    task.spawn(function()
+        for _ = 1, 45 do
+            if SC.UI.Built then return end
+            local host = scTryHost(card) or scFindHostByTitle()
+            if host then
+                local ok, err = pcall(scBuildUi, host)
+                if ok and SC.UI.Built then return end
+                warn("[R&8_DV] Daftar item visual gagal dibangun: " .. tostring(err))
+                if SC.UI.Root then SC.UI.Root:Destroy(); SC.UI.Root = nil end
+                SC.UI.Built = false
+            end
+            task.wait(1)
+        end
+        warn("[R&8_DV] Daftar item visual: kartu host tidak ditemukan. Item tetap bisa dipakai lewat kolom Nama / ID + tombol SET")
+    end)
+end
+
+-- =========================================================================
 -- KATEGORI 1: SPAMMER
 -- =========================================================================
 if UI.Category then UI:Category("Spammer") end
@@ -927,6 +1298,20 @@ feature("Item", "Set Clothes")({
         })
         ItemCard:Input("Nama / ID Item", "SC_Items", "contoh: Legendary Wings, Boots", "")
 
+        local FilterCard = c:Card("Cari & Filter", nil, "Palette", {
+            Subtitle = "Cari nama item, ID item, nama atlas, atau angka rbxassetid sheet. Filter slot: head, hair, mask, dll"
+        })
+        FilterCard:Input("Search", "SC_Search", "contoh: wings, 1784, gtHair", "")
+        FilterCard:Dropdown("Slot", "SC_Filter", SC_FILTER_NAMES, "Semua", function(v)
+            SC.UI.Filter = v
+            SC.UI.Dirty = true
+        end)
+
+        local ListCard = c:Card(SC_CARD_TITLE, nil, "Palette", {
+            Subtitle = "Gambar asli item. Tap 1x = info, tap 2x = pakai di visual. Scroll untuk melihat semua"
+        })
+        scLaunchUi(ListCard)
+
         local JumpCard = c:Card("Anti Teleport Double Jump", nil, "Shield", {
             Subtitle = "Dipakai hanya saat sayap double jump-nya visual. Tahan paket = server tidak melihat lompatan udara"
         })
@@ -944,6 +1329,14 @@ feature("Item", "Set Clothes")({
         end)
         CtrlCard:Button("Kembali ke awal", "KEMBALI", "Check", function()
             scReset()
+            scRefreshWorn()
+        end)
+        CtrlCard:Button("Lepas semua item (visual)", "UNWEAR ALL", "Shield", function()
+            scUnwearAll()
+        end)
+        CtrlCard:Button("Refresh item dipakai", "REFRESH", "Bolt", function()
+            pcall(scFindWorn)
+            scRefreshWorn()
         end)
 
         local NoteCard = r:Card("Catatan", nil, "Shield", {
