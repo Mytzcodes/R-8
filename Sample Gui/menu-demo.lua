@@ -339,12 +339,17 @@ local function vnReadColor()
 end
 
 -- =========================================================================
--- ROLE COMMANDS (client): /help diganti daftar command milik role yang dipilih
--- dan command staff dijalankan secara visual saja (tidak dikirim ke server).
+-- ROLE COMMANDS (client)
+-- /help TIDAK membuat panel baru: pakai panel Help bawaan game (border, judul,
+-- tombol X, scroll, chip command) lalu isinya ditimpa sesuai role yang dipilih:
+--   Player      -> Everyone
+--   World Owner -> Everyone + World owner
+--   Moderator   -> Everyone + World owner + Staff Moderator (+ legend)
+--   Developer   -> Everyone + World owner + Staff Moderator + Staff Developer
 -- Daftar command Moderator/Developer tidak ada di ekspor (StaffCommands hanya
 -- dikirim ke akun staff), jadi bisa kamu isi sendiri di kartu Role.
 -- =========================================================================
-local RC = { Role = nil, Installed = false, Game = nil, Chat = nil, OrigOpen = nil, OrigCmd = nil, Gui = nil }
+local RC = { Role = nil, Installed = false, Game = nil, Chat = nil, OrigOpen = nil, OrigCmd = nil, Parts = nil }
 
 local function rcWords(s)
     local t = {}
@@ -370,16 +375,18 @@ end
 local function rcGroups(role)
     local real = rcRealCommands()
     local groups = {
-        { title = "Everyone",    kind = "player", names = real.player },
-        { title = "World owner", kind = "world",  names = real.world },
+        { title = "Everyone", kind = "player", names = real.player },
     }
+    if role ~= "Player" then
+        groups[#groups + 1] = { title = "World owner", kind = "world", names = real.world }
+    end
     if role == "Moderator" or role == "Developer" then
         groups[#groups + 1] = { title = "Staff - Moderator", kind = "mod", names = rcWords(getValue("RC_ModCmds", "")) }
     end
     if role == "Developer" then
         groups[#groups + 1] = { title = "Staff - Developer", kind = "dev", names = rcWords(getValue("RC_DevCmds", "")) }
     end
-    return groups, real
+    return groups
 end
 
 local function rcFind()
@@ -402,112 +409,144 @@ local function rcFind()
     end
 end
 
-local function rcClosePanel()
-    if RC.Gui then pcall(function() RC.Gui:Destroy() end) end
-    RC.Gui = nil
-end
+-- Ambil bagian-bagian panel Help ASLI milik game lewat upvalue fungsi open():
+--   build (fungsi pembuat isi), panel (objek Panel), lalu dari build:
+--   Flow / Legend / Commands (scroll), BitmapText, ui (corner/stroke), Sfx, chat
+local function rcFindParts()
+    if RC.Parts then return RC.Parts end
+    if not (RC.Game and type(RC.Game.help) == "table" and type(RC.OrigOpen) == "function") then return nil end
+    if type(debug) ~= "table" or type(debug.getupvalues) ~= "function" then return nil end
 
-local function rcColorFor(kind)
-    local ok, Roles = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Shared", 5):WaitForChild("Roles", 5))
-    end)
-    if kind == "mod" then return (ok and Roles and Roles.MODERATOR_COLOR) or Color3.fromRGB(255, 193, 94) end
-    if kind == "dev" then return (ok and Roles and Roles.DEVELOPER_COLOR) or Color3.fromRGB(255, 39, 29) end
-    if kind == "world" then return Color3.fromRGB(73, 252, 0) end
-    return Color3.fromRGB(235, 238, 245)
-end
-
-local function rcNew(class, props, parent)
-    local o = Instance.new(class)
-    for k, v in pairs(props) do o[k] = v end
-    if parent then o.Parent = parent end
-    return o
-end
-
-local function rcOpenPanel()
-    rcClosePanel()
-    local role = RC.Role
-    if not role then return end
-    local groups = rcGroups(role)
-
-    local gui = rcNew("ScreenGui", {
-        Name = "R8DV_RoleHelp", ResetOnSpawn = false, DisplayOrder = 960,
-        IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    })
-    pcall(function()
-        gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-    end)
-    if not gui.Parent then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-    RC.Gui = gui
-
-    local main = rcNew("Frame", {
-        Size = UDim2.fromOffset(560, 420), AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(18, 22, 30),
-        BorderSizePixel = 0,
-    }, gui)
-    rcNew("UICorner", { CornerRadius = UDim.new(0, 8) }, main)
-    rcNew("UIStroke", { Color = Color3.fromRGB(56, 66, 86), Thickness = 1 }, main)
-    local cam = workspace.CurrentCamera
-    if cam then
-        rcNew("UIScale", { Scale = math.clamp(cam.ViewportSize.Y / 620, 0.6, 1) }, main)
+    local p = {}
+    local okU, ups = pcall(debug.getupvalues, RC.OrigOpen)
+    if not okU or type(ups) ~= "table" then return nil end
+    for _, up in pairs(ups) do
+        if type(up) == "function" and not p.build then
+            p.build = up
+        elseif type(up) == "table" and type(rawget(up, "setHeight")) == "function" then
+            p.panel = up
+        end
     end
+    if not (p.build and p.panel) then return nil end
 
-    rcNew("TextLabel", {
-        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -60, 0, 28),
-        BackgroundTransparency = 1, Text = "Commands  -  " .. role .. "  (visual)",
-        TextColor3 = Color3.fromRGB(232, 236, 244), Font = Enum.Font.GothamMedium,
-        TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left,
-    }, main)
-    local close = rcNew("TextButton", {
-        Position = UDim2.new(1, -40, 0, 6), Size = UDim2.fromOffset(32, 32),
-        BackgroundTransparency = 1, Text = "X", TextColor3 = Color3.fromRGB(170, 180, 196),
-        Font = Enum.Font.Gotham, TextSize = 16,
-    }, main)
-    close.Activated:Connect(rcClosePanel)
-
-    local scroll = rcNew("ScrollingFrame", {
-        Position = UDim2.fromOffset(14, 46), Size = UDim2.new(1, -28, 1, -60),
-        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-    }, main)
-    rcNew("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
-
-    for gi, g in ipairs(groups) do
-        if #g.names > 0 then
-            local color = rcColorFor(g.kind)
-            rcNew("TextLabel", {
-                LayoutOrder = gi * 2 - 1, Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1,
-                Text = g.title, TextColor3 = Color3.fromRGB(170, 180, 196),
-                Font = Enum.Font.GothamMedium, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
-            }, scroll)
-            local flow = rcNew("Frame", {
-                LayoutOrder = gi * 2, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundTransparency = 1,
-            }, scroll)
-            rcNew("UIListLayout", {
-                FillDirection = Enum.FillDirection.Horizontal, Wraps = true,
-                Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
-            }, flow)
-            for _, name in ipairs(g.names) do
-                local chip = rcNew("TextButton", {
-                    Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = Color3.fromRGB(32, 38, 50), BorderSizePixel = 0,
-                    Text = "/" .. name, TextColor3 = color, Font = Enum.Font.Gotham, TextSize = 14,
-                    AutoButtonColor = true,
-                }, flow)
-                rcNew("UICorner", { CornerRadius = UDim.new(0, 6) }, chip)
-                rcNew("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, chip)
-                chip.Activated:Connect(function()
-                    rcClosePanel()
-                    pcall(function()
-                        if RC.Chat and type(RC.Chat.prefill) == "function" then
-                            RC.Chat.prefill("/" .. name .. " ")
-                        end
-                    end)
-                end)
+    local okB, bups = pcall(debug.getupvalues, p.build)
+    if not okB or type(bups) ~= "table" then return nil end
+    for _, up in pairs(bups) do
+        if typeof(up) == "Instance" then
+            if up.Name == "Flow" then p.flow = up
+            elseif up.Name == "Legend" then p.legend = up
+            elseif up.Name == "Commands" and up:IsA("ScrollingFrame") then p.scroll = up end
+        elseif type(up) == "table" then
+            if type(rawget(up, "new")) == "function" and type(rawget(up, "COLORS")) == "table" then
+                p.bt = up
+            elseif type(rawget(up, "corner")) == "function" and type(rawget(up, "stroke")) == "function" then
+                p.ui = up
+            elseif rawget(up, "MODERATOR_COLOR") ~= nil then
+                p.roles = up
+            elseif type(rawget(up, "prefill")) == "function" then
+                p.chat = up
+            elseif type(rawget(up, "play")) == "function" then
+                p.sfx = up
             end
         end
     end
+    if not (p.flow and p.legend and p.scroll and p.bt and p.ui) then return nil end
+    RC.Parts = p
+    return p
+end
+
+-- Timpa isi panel Help bawaan (Flow + Legend) memakai gaya chip yang sama
+-- persis dengan HelpUI game, jadi tidak ada border / GUI baru.
+local function rcRebuild(role)
+    local P = rcFindParts()
+    if not P then error("bagian panel Help tidak ditemukan") end
+    local groups = rcGroups(role)
+    local showLegend = (role == "Moderator" or role == "Developer")
+
+    local function colorOf(kind)
+        if kind == "mod" then return (P.roles and P.roles.MODERATOR_COLOR) or Color3.fromRGB(255, 193, 94) end
+        if kind == "dev" then return (P.roles and P.roles.DEVELOPER_COLOR) or Color3.fromRGB(255, 39, 29) end
+        return Color3.new(1, 1, 1)
+    end
+
+    for _, c in ipairs(P.flow:GetChildren()) do c:Destroy() end
+    for _, c in ipairs(P.legend:GetChildren()) do c:Destroy() end
+
+    local x, y = 0, 0
+
+    local function heading(text)
+        if x > 0 or y > 0 then y = y + 68 end
+        x = 0
+        local bt = P.bt.new(P.flow, { size = 26, color = P.bt.COLORS.s })
+        bt:set(text)
+        bt.frame.Position = UDim2.fromOffset(0, y)
+        y = y + 34
+        x = -1
+    end
+
+    local function chip(name, kind)
+        local color = colorOf(kind)
+        local b = Instance.new("TextButton")
+        b.Name = name
+        b.Text = ""
+        b.AutoButtonColor = true
+        b.BackgroundColor3 = Color3.new(0, 0, 0)
+        b.BackgroundTransparency = 0.5
+        local bt = P.bt.new(b, { size = 30, color = color })
+        bt:set("/" .. name)
+        bt.frame.AnchorPoint = Vector2.new(0.5, 0.5)
+        bt.frame.Position = UDim2.fromScale(0.5, 0.5)
+        local w = math.ceil(bt.contentWidth) + 36
+        if x < 0 then
+            x = 0
+        elseif x > 0 and x + w > 1000 then
+            x = 0
+            y = y + 62
+        end
+        b.Position = UDim2.fromOffset(x, y)
+        b.Size = UDim2.fromOffset(w, 52)
+        b.Parent = P.flow
+        P.ui.corner(b, 10)
+        P.ui.stroke(b, color, 2).Transparency = 0.45
+        x = x + w + 10
+        b.Activated:Connect(function()
+            if P.sfx then pcall(P.sfx.play, "click") end
+            pcall(function() P.panel:close() end)
+            if P.chat and P.chat.prefill then pcall(P.chat.prefill, "/" .. name .. " ") end
+        end)
+    end
+
+    for _, g in ipairs(groups) do
+        if #g.names > 0 then
+            heading(g.title)
+            for _, n in ipairs(g.names) do chip(n, g.kind) end
+        end
+    end
+
+    -- legend (Everyone | Moderator | Developer) seperti tampilan staff asli
+    local legendTop = 100
+    if showLegend then
+        local lx = 0
+        local items = { { "Everyone", "player" }, { "Moderator", "mod" } }
+        if role == "Developer" then items[#items + 1] = { "Developer", "dev" } end
+        for _, it in ipairs(items) do
+            local bt = P.bt.new(P.legend, { size = 26, color = colorOf(it[2]) })
+            bt:set(it[1])
+            bt.frame.Position = UDim2.fromOffset(lx, 0)
+            lx = lx + math.ceil(bt.contentWidth) + 40
+        end
+        legendTop = 140
+    end
+    P.legend.Visible = showLegend
+
+    local contentH = y + 52
+    local viewH = math.min(contentH + 32, 720)
+    P.flow.Size = UDim2.new(1, -44, 0, contentH)
+    P.scroll.Position = UDim2.fromOffset(28, legendTop)
+    P.scroll.Size = UDim2.fromOffset(1044, viewH)
+    P.scroll.CanvasSize = UDim2.fromOffset(0, contentH + 32)
+    P.scroll.CanvasPosition = Vector2.zero
+    P.panel:setHeight(legendTop + viewH + 28)
 end
 
 -- true kalau command staff ini harus dijalankan secara visual saja
@@ -516,7 +555,7 @@ local function rcFakeCommand(text)
     local cmd, args = string.match(text, "^/(%a+)%s*(.-)%s*$")
     if not cmd then return false end
     cmd = cmd:lower()
-    local _, real = rcGroups(RC.Role)
+    local real = rcRealCommands()
     if real.all[cmd] then return false end -- command asli game tetap diproses game
 
     local allowed = false
@@ -543,10 +582,19 @@ local function rcInstall()
         pcall(function()
             RC.Game.help.open = function(...)
                 if RC.Role then
-                    rcOpenPanel()
-                else
-                    return orig(...)
+                    local P = rcFindParts()
+                    if P then
+                        local okAll = pcall(function()
+                            P.build()               -- builder asli game (reset isi panel)
+                            rcRebuild(RC.Role)      -- timpa isi sesuai role
+                            P.panel:open()          -- buka panel asli
+                        end)
+                        if okAll then return end
+                    else
+                        warn("[R&8_DV] Role: bagian panel Help tidak terbaca, memakai /help asli")
+                    end
                 end
+                return orig(...)
             end
         end)
     else
@@ -566,14 +614,13 @@ local function rcInstall()
 end
 
 local function rcUninstall()
-    rcClosePanel()
     if RC.Game and RC.OrigOpen and type(RC.Game.help) == "table" then
         pcall(function() RC.Game.help.open = RC.OrigOpen end)
     end
     if RC.Chat and RC.OrigCmd then
         pcall(function() RC.Chat.onCommand = RC.OrigCmd end)
     end
-    RC.OrigOpen, RC.OrigCmd = nil, nil
+    RC.OrigOpen, RC.OrigCmd, RC.Parts = nil, nil, nil
     RC.Role, RC.Installed = nil, false
 end
 
@@ -678,31 +725,44 @@ end)
 
 -- =========================================================================
 -- LOGIKA ITEM VISUAL (pakaian & aksesori saja, tanpa block dan seed) - 100% CLIENT
---  * Yang dipakai = tabel `worn` milik Game. Game membaca tabel itu untuk
---    menggambar karakter DAN untuk efek: slash/rapier/katana saat memukul,
---    kecepatan, gali, slow fall, fireproof, dll. Jadi item di sini ikut
---    menerapkan efeknya di karakter client.
+--  * Yang dipakai = tabel `worn` milik Game. Setiap perubahan diikuti
+--    Game.refresh() (INI yang membuat baju benar-benar tergambar di karakter)
+--    dan Game.effects/effectsChanged (supaya efek slash/rapier/speed ikut jalan).
 --  * Net.wear.send dibungkus supaya server tetap menerima pakaian asli.
---  * Panel bisa tampil DI DALAM menu utama (kartu Item Visual) atau melayang.
+--  * Panel TIDAK membuat ScreenGui baru: selalu ditempel di dalam menu utama
+--    (di bawah kartu Item Visual).
+--  * Daftar = kartu list (gambar atlas asset ID Roblox + nama + ID + slot),
+--    bisa dicari, difilter per slot (Head/Mask/Hair/...), scroll.
+--  * Tap 1x = pilih, tap 2x = pakai / lepas. Ada UNWEAR ALL dan RESET.
 -- =========================================================================
 local IV = {
     Active = false,
     Run = 0,
-    DB = nil, Items = nil, Slots = nil, IconMod = nil,
-    Worn = nil,
+    DB = nil, Items = nil, Slots = nil, Assets = nil, Autotile = nil, IconMod = nil,
+    Worn = nil, Game = nil, State = nil,
     Ov = {},
     WearTbl = nil, OrigSend = nil,
-    Gui = nil, Main = nil, Mini = nil, Grid = nil, WornScroll = nil,
-    CountLbl = nil, SlotBtn = nil, FxBtn = nil, Search = nil,
-    Conns = {}, Cells = {}, WornSig = "",
-    Query = "", SlotFilter = "Semua", HideFx = false, -- efek item aktif secara default
+    Main = nil, Grid = nil, WornScroll = nil, ChipRow = nil,
+    CountLbl = nil, Search = nil, InfoLbl = nil, InfoBtn = nil,
+    Conns = {}, Cells = {}, WornSig = "", ChipBtns = {},
+    Query = "", Filter = "Semua", -- Semua | Dipakai | Efek | <slot>
     List = {}, Rendered = 0,
-    Toggle = nil,
-    Embedded = false,
+    Selected = nil, TapId = nil, TapAt = 0,
+    Toggle = nil, HostLabel = nil, Z = 1,
 }
-local IV_PAGE = 48
+local IV_PAGE = 40
 local IV_HOST_TAG = "R8DV_ITEMHOST"
+local IV_HOST_DONE = "Panel muncul di bawah kartu ini. Tap 1x pilih, tap 2x pakai / lepas"
 local IV_FX_KEYS = { "speed", "dig", "slowFall", "fireproof", "rapier", "voidEye", "voidKatana", "slashFx", "doubleJump" }
+local IV_SLOT_LABEL = {
+    hat = "Head", face = "Mask", hair = "Hair", shirt = "Shirt", chest = "Chest",
+    pants = "Pants", feet = "Feet", hand = "Hand", back = "Back",
+}
+local IV_SLOT_ORDER = { "hat", "face", "hair", "shirt", "chest", "pants", "feet", "hand", "back" }
+
+local function ivSlotLabel(slot)
+    return IV_SLOT_LABEL[slot] or (slot:sub(1, 1):upper() .. slot:sub(2))
+end
 
 local IV_C = {
     bg    = Color3.fromRGB(18, 22, 30),
@@ -712,7 +772,9 @@ local IV_C = {
     sub   = Color3.fromRGB(170, 180, 196),
     worn  = Color3.fromRGB(73, 252, 0),
     vis   = Color3.fromRGB(25, 185, 255),
+    pick  = Color3.fromRGB(255, 193, 94),
     btn   = Color3.fromRGB(44, 52, 68),
+    btnOn = Color3.fromRGB(80, 96, 128),
 }
 
 local function ivHasFx(it)
@@ -730,6 +792,7 @@ local function ivLooksLikeWorn(t)
     return true
 end
 
+-- Cari: tabel worn, objek karakter game (punya refresh), tabel state game (punya call/effects)
 local function ivFindWorn()
     if type(getgc) ~= "function" or type(debug) ~= "table" or type(debug.getupvalues) ~= "function" then
         return nil, "executor tidak mendukung getgc / debug.getupvalues"
@@ -742,8 +805,17 @@ local function ivFindWorn()
             if okF and type(fn) == "function" then
                 local okU, ups = pcall(debug.getupvalues, fn)
                 if okU and type(ups) == "table" then
+                    local worn, state
                     for _, up in pairs(ups) do
-                        if ivLooksLikeWorn(up) then return up end
+                        if type(up) == "table" then
+                            if not worn and ivLooksLikeWorn(up) then worn = up end
+                            if not state and type(rawget(up, "call")) == "function" then state = up end
+                        end
+                    end
+                    if worn then
+                        IV.Game = obj
+                        IV.State = state or RC.Game
+                        return worn
                     end
                 end
             end
@@ -788,9 +860,8 @@ end
 
 local function ivBuildItems()
     if IV.Items then return true end
-    local ok, DB = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Shared", 5):WaitForChild("ItemDB", 5))
-    end)
+    local sh = ReplicatedStorage:WaitForChild("Shared", 5)
+    local ok, DB = pcall(function() return require(sh:WaitForChild("ItemDB", 5)) end)
     if not ok or type(DB) ~= "table" then return false end
 
     local items, slotSet = {}, {}
@@ -801,7 +872,8 @@ local function ivBuildItems()
             slotSet[it.slot] = true
             items[#items + 1] = {
                 id = id, name = it.name, lname = it.name:lower(),
-                slot = it.slot, fx = ivHasFx(it),
+                slot = it.slot, lslot = (it.slot .. " " .. ivSlotLabel(it.slot)):lower(),
+                fx = ivHasFx(it),
             }
         end
     end
@@ -810,102 +882,228 @@ local function ivBuildItems()
         return a.name < b.name
     end)
 
-    local tmp = {}
-    for s in pairs(slotSet) do tmp[#tmp + 1] = s end
-    table.sort(tmp)
-    local slots = { "Semua" }
-    for _, s in ipairs(tmp) do slots[#slots + 1] = s end
+    -- urutan slot: Head, Mask, Hair, ... lalu sisanya alfabet
+    local slots, seen = {}, {}
+    for _, s in ipairs(IV_SLOT_ORDER) do
+        if slotSet[s] then slots[#slots + 1] = s; seen[s] = true end
+    end
+    local rest = {}
+    for s in pairs(slotSet) do if not seen[s] then rest[#rest + 1] = s end end
+    table.sort(rest)
+    for _, s in ipairs(rest) do slots[#slots + 1] = s end
 
     IV.DB, IV.Items, IV.Slots = DB, items, slots
-    local okI, icon = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Shared", 5):WaitForChild("ItemIcon", 5))
-    end)
+    local okA, assets = pcall(function() return require(sh:WaitForChild("Assets", 5)) end)
+    IV.Assets = okA and assets or nil
+    local okT, tile = pcall(function() return require(sh:WaitForChild("Autotile", 5)) end)
+    IV.Autotile = okT and tile or nil
+    local okI, icon = pcall(function() return require(sh:WaitForChild("ItemIcon", 5)) end)
     IV.IconMod = okI and icon or nil
     return #items > 0
 end
 
-local function ivWear(id)
-    local it = IV.DB and IV.DB[id]
-    if not it or not it.slot then return end
-    local slot = it.slot
-    if IV.Ov[slot] == nil then IV.Ov[slot] = { real = IV.Worn[slot] } end
-    IV.Ov[slot].vis = id
-    IV.Worn[slot] = id
-    if IV.Ov[slot].real == id then IV.Ov[slot] = nil end
-end
+-- ---------------------------------------------------------------------
+-- Terapkan perubahan ke tabel worn + catat override + gambar ulang karakter
+-- ---------------------------------------------------------------------
+local function ivMutate(fn)
+    local W = IV.Worn
+    if not W then return end
+    local before = {}
+    for k, v in pairs(W) do before[k] = v end
 
-local function ivUnwear(slot)
-    if IV.Worn[slot] == nil and IV.Ov[slot] == nil then return end
-    if IV.Ov[slot] == nil then IV.Ov[slot] = { real = IV.Worn[slot] } end
-    IV.Ov[slot].vis = false
-    IV.Worn[slot] = nil
-end
-
-local function ivReset(slot)
-    local o = IV.Ov[slot]
-    if o then
-        IV.Worn[slot] = o.real
-        IV.Ov[slot] = nil
+    local G = IV.State
+    local prevFx = nil
+    if G and type(G.effects) == "function" then
+        local ok, r = pcall(G.effects)
+        if ok then prevFx = r end
     end
-end
 
-local function ivResetAll()
-    if not IV.Worn then return end
+    fn(W)
+
     local slots = {}
-    for slot in pairs(IV.Ov) do slots[#slots + 1] = slot end
-    for _, slot in ipairs(slots) do ivReset(slot) end
+    for k in pairs(before) do slots[k] = true end
+    for k in pairs(W) do slots[k] = true end
+    for slot in pairs(slots) do
+        if W[slot] ~= before[slot] then
+            local o = IV.Ov[slot]
+            if not o then
+                o = { real = before[slot] }
+                IV.Ov[slot] = o
+            end
+            o.vis = W[slot] or false
+            if o.real == W[slot] then IV.Ov[slot] = nil end
+        end
+    end
+
+    if prevFx and G and type(G.effectsChanged) == "function" then
+        pcall(G.effectsChanged, prevFx)
+    end
+    if G then
+        local hand = W.hand
+        if hand == 138 or hand == 5480 then G.punchPick = hand end
+    end
+    if IV.Game and type(IV.Game.refresh) == "function" then
+        pcall(IV.Game.refresh)
+    end
 end
 
 local function ivToggleItem(id)
     local it = IV.DB and IV.DB[id]
     if not it or not it.slot then return end
-    local slot = it.slot
-    if IV.Worn[slot] == id then
-        local o = IV.Ov[slot]
-        if o and o.vis == id and o.real ~= id then
-            ivReset(slot)
+    ivMutate(function(W)
+        local slot = it.slot
+        if W[slot] == id then
+            W[slot] = nil
         else
-            ivUnwear(slot)
+            -- aturan "suit" game: slot yang tidak cocok dilepas otomatis
+            local s = it.suit
+            for k, other in pairs(W) do
+                local o = IV.DB[other]
+                local os = o and o.suit
+                if not (k == slot or ((not s or s[k]) and (not os or os[slot]))) then
+                    W[k] = nil
+                end
+            end
+            W[slot] = id
         end
-    else
-        ivWear(id)
-    end
+    end)
 end
 
+local function ivUnwearAll()
+    ivMutate(function(W)
+        for k in pairs(W) do W[k] = nil end
+    end)
+end
+
+local function ivResetAll()
+    ivMutate(function(W)
+        for slot, o in pairs(IV.Ov) do W[slot] = o.real end
+    end)
+    IV.Ov = {}
+end
+
+-- jaga-jaga kalau game menghapus item visual (mis. event inventory berubah)
 local function ivKeepAlive()
+    local W = IV.Worn
+    if not W then return end
+    local changed = false
     for slot, o in pairs(IV.Ov) do
         local want = o.vis or nil
-        local cur = IV.Worn[slot]
+        local cur = W[slot]
         if cur ~= want then
             if cur == nil then
-                IV.Worn[slot] = want
+                W[slot] = want
+                changed = true
             else
-                IV.Ov[slot] = nil
+                IV.Ov[slot] = nil -- pemain ganti sendiri lewat inventory asli
             end
         end
     end
+    if changed and IV.Game and type(IV.Game.refresh) == "function" then
+        pcall(IV.Game.refresh)
+    end
 end
 
--- ---- UI panel ----
+-- ---------------------------------------------------------------------
+-- UI (di dalam menu utama, tanpa ScreenGui baru)
+-- ---------------------------------------------------------------------
 local function ivNew(class, props, parent)
     local o = Instance.new(class)
     for k, v in pairs(props) do o[k] = v end
+    if o:IsA("GuiObject") then o.ZIndex = IV.Z + (props.ZIndex or 0) end
     if parent then o.Parent = parent end
     return o
 end
 
+-- Gambar item = potongan 32x32 dari atlas rbxassetid milik game (Assets.Atlas)
 local function ivIcon(parent, id, size, pos)
-    if not IV.IconMod then return end
-    local okN, icon = pcall(IV.IconMod.new, parent, UDim2.fromOffset(size, size), 3)
-    if not okN or not icon then return end
-    icon.frame.Position = pos
-    pcall(IV.IconMod.set, icon, id)
+    local it = IV.DB and IV.DB[id]
+    if not it then return end
+    local sheet = IV.Assets and IV.Assets.Atlas and it.atlas and IV.Assets.Atlas[it.atlas]
+    if sheet then
+        local cx, cy = it.tx or 0, it.ty or 0
+        if IV.Autotile then
+            local ok, a, b = pcall(IV.Autotile.aloneCell, it)
+            if ok and a then cx, cy = a, b end
+        end
+        if it.slot == "feet" then cy = cy * 2 end
+        local frame = ivNew("Frame", {
+            BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size), Position = pos, ZIndex = 2,
+        }, parent)
+        ivNew("ImageLabel", {
+            BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2,
+            Image = sheet, ImageRectSize = Vector2.new(32, 32),
+            ImageRectOffset = Vector2.new(cx * 32, cy * 32),
+            ImageColor3 = it.tint or Color3.new(1, 1, 1),
+            ResampleMode = Enum.ResamplerMode.Pixelated,
+        }, frame)
+        local oc = it.overCell
+        if oc then
+            ivNew("ImageLabel", {
+                BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 3,
+                Image = sheet, ImageRectSize = Vector2.new(32, 32),
+                ImageRectOffset = Vector2.new(oc[1] * 32, oc[2] * 32),
+                ResampleMode = Enum.ResamplerMode.Pixelated,
+            }, frame)
+        end
+        return
+    end
+    -- cadangan: ItemIcon bawaan game
+    if IV.IconMod then
+        local okN, icon = pcall(IV.IconMod.new, parent, UDim2.fromOffset(size, size), IV.Z + 2)
+        if okN and icon then
+            icon.frame.Position = pos
+            pcall(IV.IconMod.set, icon, id)
+        end
+    end
+end
+
+local function ivInfoUpdate()
+    if not IV.InfoLbl then return end
+    local id = IV.Selected
+    local it = id and IV.DB and IV.DB[id]
+    if not it then
+        IV.InfoLbl.Text = "Belum ada item dipilih. Tap 1x pilih, tap 2x pakai / lepas"
+        if IV.InfoBtn then IV.InfoBtn.Text = "-" end
+        return
+    end
+    local worn = IV.Worn and IV.Worn[it.slot] == id
+    IV.InfoLbl.Text = it.name .. "   |   ID " .. id .. "   |   " .. ivSlotLabel(it.slot)
+    if IV.InfoBtn then IV.InfoBtn.Text = worn and "LEPAS" or "PAKAI" end
 end
 
 local function ivRefreshMarks()
+    local W = IV.Worn or {}
     for id, c in pairs(IV.Cells) do
-        c.stroke.Enabled = (IV.Worn[c.slot] == id)
+        local worn = (W[c.slot] == id)
+        local isVis = worn and IV.Ov[c.slot] ~= nil
+        if worn then
+            c.stroke.Color = isVis and IV_C.vis or IV_C.worn
+            c.stroke.Thickness = 2
+            c.stroke.Enabled = true
+        elseif IV.Selected == id then
+            c.stroke.Color = IV_C.pick
+            c.stroke.Thickness = 2
+            c.stroke.Enabled = true
+        else
+            c.stroke.Enabled = false
+        end
+        c.mark.Text = worn and (isVis and "VISUAL" or "DIPAKAI") or ""
+        c.mark.TextColor3 = isVis and IV_C.vis or IV_C.worn
     end
+    ivInfoUpdate()
+end
+
+local function ivTap(id)
+    local now = os.clock()
+    IV.Selected = id
+    if IV.TapId == id and now - IV.TapAt < 0.45 then
+        IV.TapId = nil
+        ivToggleItem(id) -- tap 2x = pakai / lepas
+    else
+        IV.TapId, IV.TapAt = id, now
+    end
+    ivRefreshMarks()
 end
 
 local function ivRebuildWorn()
@@ -927,63 +1125,78 @@ local function ivRebuildWorn()
     for i, s in ipairs(keys) do
         local id = IV.Worn[s]
         local btn = ivNew("TextButton", {
-            LayoutOrder = i, Size = UDim2.fromOffset(56, 56), Text = "",
+            LayoutOrder = i, Size = UDim2.fromOffset(60, 62), Text = "",
             BackgroundColor3 = IV_C.cell, BorderSizePixel = 0, AutoButtonColor = true,
         }, IV.WornScroll)
         ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
         ivNew("UIStroke", {
             Color = IV.Ov[s] and IV_C.vis or IV_C.line, Thickness = IV.Ov[s] and 2 or 1,
         }, btn)
-        ivIcon(btn, id, 34, UDim2.new(0.5, -17, 0, 3))
+        ivIcon(btn, id, 36, UDim2.new(0.5, -18, 0, 3))
         ivNew("TextLabel", {
-            Position = UDim2.new(0, 0, 1, -16), Size = UDim2.new(1, 0, 0, 14),
-            BackgroundTransparency = 1, Text = s, TextSize = 11,
+            Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 16),
+            BackgroundTransparency = 1, Text = ivSlotLabel(s), TextSize = 11, ZIndex = 3,
             Font = Enum.Font.Gotham, TextColor3 = IV_C.sub,
         }, btn)
-        btn.Activated:Connect(function()
-            ivToggleItem(id)
-            ivRefreshMarks()
-        end)
+        btn.Activated:Connect(function() ivTap(id) end)
     end
 end
 
 local function ivRenderMore()
     if not IV.Grid then return end
+    local W = IV.Worn or {}
     local last = math.min(IV.Rendered + IV_PAGE, #IV.List)
     for i = IV.Rendered + 1, last do
         local e = IV.List[i]
         local btn = ivNew("TextButton", {
-            Name = "Item" .. e.id, LayoutOrder = i, Text = "",
+            Name = "Item" .. e.id, LayoutOrder = i, Text = "", Size = UDim2.new(1, -6, 0, 56),
             BackgroundColor3 = IV_C.cell, BorderSizePixel = 0, AutoButtonColor = true,
         }, IV.Grid)
-        ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
+        ivNew("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
         local stroke = ivNew("UIStroke", {
-            Color = IV_C.worn, Thickness = 2, Enabled = (IV.Worn and IV.Worn[e.slot] == e.id) or false,
+            Color = IV_C.worn, Thickness = 2, Enabled = (W[e.slot] == e.id),
         }, btn)
-        ivIcon(btn, e.id, 40, UDim2.new(0.5, -20, 0, 4))
+        ivIcon(btn, e.id, 44, UDim2.fromOffset(6, 6))
         ivNew("TextLabel", {
-            Position = UDim2.new(0, 2, 1, -34), Size = UDim2.new(1, -4, 0, 32),
-            BackgroundTransparency = 1, Text = e.name .. (e.fx and " *" or ""), TextSize = 11, TextWrapped = true,
-            TextTruncate = Enum.TextTruncate.AtEnd, Font = Enum.Font.Gotham,
-            TextColor3 = IV_C.text, TextYAlignment = Enum.TextYAlignment.Top,
+            Position = UDim2.fromOffset(58, 6), Size = UDim2.new(1, -136, 0, 22),
+            BackgroundTransparency = 1, Text = e.name, TextSize = 14, ZIndex = 3,
+            TextTruncate = Enum.TextTruncate.AtEnd, Font = Enum.Font.GothamMedium,
+            TextColor3 = IV_C.text, TextXAlignment = Enum.TextXAlignment.Left,
         }, btn)
-        btn.Activated:Connect(function()
-            ivToggleItem(e.id)
-            ivRefreshMarks()
-        end)
-        IV.Cells[e.id] = { btn = btn, stroke = stroke, slot = e.slot }
+        ivNew("TextLabel", {
+            Position = UDim2.fromOffset(58, 29), Size = UDim2.new(1, -136, 0, 18),
+            BackgroundTransparency = 1, TextSize = 12, ZIndex = 3,
+            Text = "ID " .. e.id .. "  |  " .. ivSlotLabel(e.slot) .. (e.fx and "  |  efek" or ""),
+            TextTruncate = Enum.TextTruncate.AtEnd, Font = Enum.Font.Gotham,
+            TextColor3 = IV_C.sub, TextXAlignment = Enum.TextXAlignment.Left,
+        }, btn)
+        local mark = ivNew("TextLabel", {
+            Position = UDim2.new(1, -74, 0, 0), Size = UDim2.new(0, 68, 1, 0),
+            BackgroundTransparency = 1, Text = "", TextSize = 11, ZIndex = 3,
+            Font = Enum.Font.GothamMedium, TextColor3 = IV_C.worn,
+            TextXAlignment = Enum.TextXAlignment.Right,
+        }, btn)
+        btn.Activated:Connect(function() ivTap(e.id) end)
+        IV.Cells[e.id] = { btn = btn, stroke = stroke, mark = mark, slot = e.slot }
     end
     IV.Rendered = last
+    ivRefreshMarks()
 end
 
 local function ivRefilter()
     if not IV.Grid then return end
     local q = IV.Query:lower()
+    local f = IV.Filter
+    local W = IV.Worn or {}
     local list = {}
     for _, e in ipairs(IV.Items) do
-        if (IV.SlotFilter == "Semua" or e.slot == IV.SlotFilter)
-            and (not IV.HideFx or not e.fx)
-            and (q == "" or e.lname:find(q, 1, true) or tostring(e.id):find(q, 1, true)) then
+        local pass
+        if f == "Semua" then pass = true
+        elseif f == "Dipakai" then pass = (W[e.slot] == e.id)
+        elseif f == "Efek" then pass = e.fx
+        else pass = (e.slot == f) end
+        if pass and (q == "" or e.lname:find(q, 1, true) or e.lslot:find(q, 1, true)
+            or tostring(e.id):find(q, 1, true)) then
             list[#list + 1] = e
         end
     end
@@ -993,14 +1206,48 @@ local function ivRefilter()
     ivRenderMore()
     IV.Grid.CanvasPosition = Vector2.zero
     if IV.CountLbl then
-        IV.CountLbl.Text = #list .. " item  |  tap = pakai / lepas  |  * = punya efek"
+        IV.CountLbl.Text = #list .. " item  |  tap 1x pilih, tap 2x pakai / lepas"
     end
 end
 
--- Cari tempat di dalam menu utama (kartu Item Visual) untuk menaruh panel.
--- Kartu dibuat dengan subtitle penanda; kita cari labelnya lalu naik ke
--- daftar (UIListLayout) terdekat yang isinya >= 3 elemen.
+local function ivStyleChips()
+    for key, b in pairs(IV.ChipBtns) do
+        local on = (key == IV.Filter)
+        b.BackgroundColor3 = on and IV_C.btnOn or IV_C.btn
+        b.TextColor3 = on and Color3.new(1, 1, 1) or IV_C.sub
+    end
+end
+
+-- Cari tempat di dalam menu utama untuk menaruh panel. Kartu dibuat dengan
+-- subtitle penanda; setelah ditemukan teksnya diganti dan label disimpan
+-- supaya START berikutnya tetap menemukan tempat yang sama.
 local function ivFindHost()
+    local function hostFrom(label)
+        -- 1) kolom berisi kartu-kartu: ScrollingFrame / frame ber-UIListLayout terdekat
+        local s = label:FindFirstAncestorWhichIsA("ScrollingFrame")
+        if s then
+            if s:FindFirstChildOfClass("UIListLayout") then return s end
+            for _, ch in ipairs(s:GetChildren()) do
+                if ch:IsA("GuiObject") and ch:FindFirstChildOfClass("UIListLayout") then return ch end
+            end
+        end
+        -- 2) naik sampai ketemu daftar lebar
+        local p = label.Parent
+        while p and not p:IsA("LayerCollector") do
+            if p:FindFirstChildOfClass("UIListLayout") and #p:GetChildren() >= 3
+                and p.AbsoluteSize.X > 300 then
+                return p
+            end
+            p = p.Parent
+        end
+        return nil
+    end
+
+    if IV.HostLabel and IV.HostLabel.Parent then
+        local h = hostFrom(IV.HostLabel)
+        if h then return h end
+    end
+
     local containers = {}
     pcall(function() if type(gethui) == "function" then containers[#containers + 1] = gethui() end end)
     pcall(function() containers[#containers + 1] = game:GetService("CoreGui") end)
@@ -1008,18 +1255,12 @@ local function ivFindHost()
     for _, c in ipairs(containers) do
         if c then
             for _, d in ipairs(c:GetDescendants()) do
-                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text:find(IV_HOST_TAG, 1, true) then
-                    pcall(function()
-                        d.Text = "Panel muncul di bawah kartu ini. Tap item = pakai / lepas"
-                    end)
-                    local p = d.Parent
-                    while p and not p:IsA("LayerCollector") do
-                        if p:FindFirstChildOfClass("UIListLayout") and #p:GetChildren() >= 3
-                            and p.AbsoluteSize.X > 300 then
-                            return p
-                        end
-                        p = p.Parent
-                    end
+                if (d:IsA("TextLabel") or d:IsA("TextButton"))
+                    and (d.Text:find(IV_HOST_TAG, 1, true) or d.Text == IV_HOST_DONE) then
+                    pcall(function() d.Text = IV_HOST_DONE end)
+                    IV.HostLabel = d
+                    local h = hostFrom(d)
+                    if h then return h end
                 end
             end
         end
@@ -1027,104 +1268,48 @@ local function ivFindHost()
     return nil
 end
 
-local function ivBuildGui()
-    local host = nil
-    if getValue("IV_Embed", true) then host = ivFindHost() end
-    IV.Embedded = host ~= nil
-
-    local gui, main
-    if host then
-        main = ivNew("Frame", {
-            Name = "R8DV_ItemVisualPanel", Size = UDim2.new(1, 0, 0, 540),
-            LayoutOrder = 100000, BackgroundColor3 = IV_C.bg, BorderSizePixel = 0,
-        }, host)
-        ivNew("UICorner", { CornerRadius = UDim.new(0, 8) }, main)
-        ivNew("UIStroke", { Color = IV_C.line, Thickness = 1 }, main)
-    else
-        gui = ivNew("ScreenGui", {
-            Name = "R8DV_ItemVisual", ResetOnSpawn = false, DisplayOrder = 950,
-            IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        })
-        pcall(function()
-            local h = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-            gui.Parent = h
-        end)
-        if not gui.Parent then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-        IV.Gui = gui
-
-        main = ivNew("Frame", {
-            Name = "Main", Size = UDim2.fromOffset(350, 500), AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -12, 0.5, 0), BackgroundColor3 = IV_C.bg, BorderSizePixel = 0,
-        }, gui)
-        ivNew("UICorner", { CornerRadius = UDim.new(0, 8) }, main)
-        ivNew("UIStroke", { Color = IV_C.line, Thickness = 1 }, main)
-        local scale = ivNew("UIScale", {}, main)
-        local cam = workspace.CurrentCamera
-        if cam then scale.Scale = math.clamp(cam.ViewportSize.Y / 760, 0.6, 1) end
+local function ivZBase(host)
+    local layer = host:FindFirstAncestorWhichIsA("LayerCollector")
+    if layer and layer:IsA("ScreenGui") and layer.ZIndexBehavior == Enum.ZIndexBehavior.Global then
+        local m = 1
+        for _, d in ipairs(layer:GetDescendants()) do
+            if d:IsA("GuiObject") and d.ZIndex > m then m = d.ZIndex end
+        end
+        return m + 1
     end
+    return 1
+end
+
+local function ivBuildGui(host)
+    IV.Z = ivZBase(host)
+
+    local main = ivNew("Frame", {
+        Name = "R8DV_ItemVisualPanel", Size = UDim2.new(1, 0, 0, 600),
+        LayoutOrder = 100000, BackgroundColor3 = IV_C.bg, BorderSizePixel = 0,
+    }, host)
+    ivNew("UICorner", { CornerRadius = UDim.new(0, 8) }, main)
+    ivNew("UIStroke", { Color = IV_C.line, Thickness = 1 }, main)
     IV.Main = main
 
-    local bar = ivNew("Frame", {
-        Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Active = true,
-    }, main)
     ivNew("TextLabel", {
-        Size = UDim2.new(1, -44, 1, 0), Position = UDim2.fromOffset(10, 0),
+        Size = UDim2.new(1, -20, 0, 28), Position = UDim2.fromOffset(10, 4),
         BackgroundTransparency = 1, Text = "ITEM VISUAL  (client only)",
         TextColor3 = IV_C.text, Font = Enum.Font.GothamMedium, TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    }, bar)
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
+    }, main)
 
-    if gui then
-        -- mode melayang: tombol ciutkan + geser
-        local mini = ivNew("TextButton", {
-            Name = "Mini", Size = UDim2.fromOffset(44, 44), AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -12, 0.5, 0), BackgroundColor3 = IV_C.bg, Visible = false,
-            Text = "IV", TextColor3 = IV_C.text, Font = Enum.Font.GothamMedium, TextSize = 14,
-            BorderSizePixel = 0,
-        }, gui)
-        ivNew("UICorner", { CornerRadius = UDim.new(1, 0) }, mini)
-        ivNew("UIStroke", { Color = IV_C.vis, Thickness = 2 }, mini)
-        IV.Mini = mini
-
-        local closeBtn = ivNew("TextButton", {
-            Size = UDim2.fromOffset(34, 34), Position = UDim2.new(1, -36, 0, 0),
-            BackgroundTransparency = 1, Text = "-", TextColor3 = IV_C.sub,
-            Font = Enum.Font.Gotham, TextSize = 22,
-        }, bar)
-        closeBtn.Activated:Connect(function() main.Visible = false; mini.Visible = true end)
-        mini.Activated:Connect(function() main.Visible = true; mini.Visible = false end)
-
-        local dragging, dragStart, startPos = false, nil, nil
-        bar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging, dragStart, startPos = true, input.Position, main.Position
-                input.Changed:Connect(function()
-                    if input.UserInputState == Enum.UserInputState.End then dragging = false end
-                end)
-            end
-        end)
-        IV.Conns[#IV.Conns + 1] = UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-                local d = input.Position - dragStart
-                main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                    startPos.Y.Scale, startPos.Y.Offset + d.Y)
-            end
-        end)
-    end
-
+    -- baris: item yang dipakai sekarang (scroll horizontal)
     ivNew("TextLabel", {
-        Position = UDim2.fromOffset(10, 36), Size = UDim2.new(1, -20, 0, 16),
-        BackgroundTransparency = 1, Text = "Dipakai sekarang  (tap = lepas, garis biru = visual)",
+        Position = UDim2.fromOffset(10, 34), Size = UDim2.new(1, -20, 0, 16),
+        BackgroundTransparency = 1, Text = "Dipakai sekarang  (garis biru = visual, tap 2x = lepas)",
         TextColor3 = IV_C.sub, Font = Enum.Font.Gotham, TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
     }, main)
     local wornScroll = ivNew("ScrollingFrame", {
-        Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -20, 0, 62),
+        Position = UDim2.fromOffset(10, 52), Size = UDim2.new(1, -20, 0, 70),
         BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
         AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(),
-        ScrollingDirection = Enum.ScrollingDirection.X,
+        ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 2,
     }, main)
     ivNew("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6),
@@ -1132,59 +1317,118 @@ local function ivBuildGui()
     }, wornScroll)
     IV.WornScroll = wornScroll
 
+    -- pencarian
     local search = ivNew("TextBox", {
-        Position = UDim2.fromOffset(10, 122), Size = UDim2.fromOffset(160, 30),
+        Position = UDim2.fromOffset(10, 128), Size = UDim2.new(1, -20, 0, 30),
         BackgroundColor3 = IV_C.cell, BorderSizePixel = 0, Text = "",
-        PlaceholderText = "Cari nama / ID...", PlaceholderColor3 = IV_C.sub,
+        PlaceholderText = "Cari nama / ID / slot (head, mask, hair...)", PlaceholderColor3 = IV_C.sub,
         TextColor3 = IV_C.text, Font = Enum.Font.Gotham, TextSize = 13,
-        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
     }, main)
     ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, search)
     ivNew("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
     IV.Search = search
 
-    local slotBtn = ivNew("TextButton", {
-        Position = UDim2.fromOffset(176, 122), Size = UDim2.fromOffset(92, 30),
-        BackgroundColor3 = IV_C.btn, BorderSizePixel = 0, Text = "Slot: " .. IV.SlotFilter,
-        TextColor3 = IV_C.text, Font = Enum.Font.Gotham, TextSize = 12,
+    -- filter slot (scroll horizontal): Semua | Dipakai | Efek | Head | Mask | ...
+    local chipRow = ivNew("ScrollingFrame", {
+        Position = UDim2.fromOffset(10, 164), Size = UDim2.new(1, -20, 0, 32),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 0,
+        AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(),
+        ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 2,
     }, main)
-    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, slotBtn)
-    IV.SlotBtn = slotBtn
+    ivNew("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center,
+    }, chipRow)
+    IV.ChipRow, IV.ChipBtns = chipRow, {}
 
-    local fxBtn = ivNew("TextButton", {
-        Position = UDim2.fromOffset(274, 122), Size = UDim2.fromOffset(76, 30),
-        BackgroundColor3 = IV_C.btn, BorderSizePixel = 0,
-        Text = IV.HideFx and "Efek: OFF" or "Efek: ON",
-        TextColor3 = IV_C.text, Font = Enum.Font.Gotham, TextSize = 12,
-    }, main)
-    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, fxBtn)
-    IV.FxBtn = fxBtn
+    local function addChip(key, label, order)
+        local b = ivNew("TextButton", {
+            LayoutOrder = order, Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundColor3 = IV_C.btn, BorderSizePixel = 0, Text = label,
+            TextColor3 = IV_C.sub, Font = Enum.Font.GothamMedium, TextSize = 12, ZIndex = 2,
+        }, chipRow)
+        ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+        ivNew("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+        b.Activated:Connect(function()
+            IV.Filter = key
+            ivStyleChips()
+            ivRefilter()
+        end)
+        IV.ChipBtns[key] = b
+    end
+    addChip("Semua", "Semua", 1)
+    addChip("Dipakai", "Dipakai", 2)
+    addChip("Efek", "Efek", 3)
+    for i, s in ipairs(IV.Slots) do addChip(s, ivSlotLabel(s), 3 + i) end
+    ivStyleChips()
 
     local countLbl = ivNew("TextLabel", {
-        Position = UDim2.fromOffset(10, 156), Size = UDim2.new(1, -20, 0, 16),
+        Position = UDim2.fromOffset(10, 200), Size = UDim2.new(1, -20, 0, 16),
         BackgroundTransparency = 1, Text = "", TextColor3 = IV_C.sub,
-        Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+        Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
     }, main)
     IV.CountLbl = countLbl
 
+    -- daftar kartu item (scroll vertikal)
     local grid = ivNew("ScrollingFrame", {
-        Position = UDim2.fromOffset(10, 176), Size = UDim2.new(1, -20, 1, -222),
+        Position = UDim2.fromOffset(10, 220), Size = UDim2.new(1, -20, 1, -330),
         BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
         AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-        ScrollingDirection = Enum.ScrollingDirection.Y,
+        ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 2,
     }, main)
-    ivNew("UIGridLayout", {
-        CellSize = UDim2.fromOffset(76, 84), CellPadding = UDim2.fromOffset(6, 6),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, grid)
+    ivNew("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, grid)
     IV.Grid = grid
 
-    local clearBtn = ivNew("TextButton", {
-        Position = UDim2.new(0, 10, 1, -38), Size = UDim2.new(1, -20, 0, 30),
-        BackgroundColor3 = IV_C.btn, BorderSizePixel = 0, Text = "Lepas Semua Visual (balik ke pakaian asli)",
-        TextColor3 = IV_C.text, Font = Enum.Font.Gotham, TextSize = 13,
+    -- info item terpilih + tombol pakai / lepas
+    local infoLbl = ivNew("TextLabel", {
+        Position = UDim2.new(0, 10, 1, -104), Size = UDim2.new(1, -110, 0, 30),
+        BackgroundTransparency = 1, Text = "", TextColor3 = IV_C.text,
+        Font = Enum.Font.Gotham, TextSize = 12, TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
     }, main)
-    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, clearBtn)
+    IV.InfoLbl = infoLbl
+    local infoBtn = ivNew("TextButton", {
+        Position = UDim2.new(1, -94, 1, -104), Size = UDim2.fromOffset(84, 30),
+        BackgroundColor3 = IV_C.btnOn, BorderSizePixel = 0, Text = "-",
+        TextColor3 = IV_C.text, Font = Enum.Font.GothamMedium, TextSize = 13, ZIndex = 2,
+    }, main)
+    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, infoBtn)
+    IV.InfoBtn = infoBtn
+    infoBtn.Activated:Connect(function()
+        if IV.Selected then
+            ivToggleItem(IV.Selected)
+            ivRefreshMarks()
+        end
+    end)
+
+    -- shortcut: UNWEAR ALL dan RESET
+    local unwearBtn = ivNew("TextButton", {
+        Position = UDim2.new(0, 10, 1, -66), Size = UDim2.new(0.5, -14, 0, 32),
+        BackgroundColor3 = IV_C.btn, BorderSizePixel = 0, Text = "UNWEAR ALL (lepas semua)",
+        TextColor3 = IV_C.text, Font = Enum.Font.GothamMedium, TextSize = 12, ZIndex = 2,
+    }, main)
+    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, unwearBtn)
+    unwearBtn.Activated:Connect(function()
+        ivUnwearAll()
+        ivRefreshMarks()
+    end)
+    local resetBtn = ivNew("TextButton", {
+        Position = UDim2.new(0.5, 4, 1, -66), Size = UDim2.new(0.5, -14, 0, 32),
+        BackgroundColor3 = IV_C.btn, BorderSizePixel = 0, Text = "RESET (balik ke pakaian asli)",
+        TextColor3 = IV_C.text, Font = Enum.Font.GothamMedium, TextSize = 12, ZIndex = 2,
+    }, main)
+    ivNew("UICorner", { CornerRadius = UDim.new(0, 6) }, resetBtn)
+    resetBtn.Activated:Connect(function()
+        ivResetAll()
+        ivRefreshMarks()
+    end)
+    ivNew("TextLabel", {
+        Position = UDim2.new(0, 10, 1, -30), Size = UDim2.new(1, -20, 0, 24),
+        BackgroundTransparency = 1, TextColor3 = IV_C.sub, Font = Enum.Font.Gotham, TextSize = 11,
+        Text = "Hanya terlihat di layarmu. Pakaian visual tidak dikirim ke server.",
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2,
+    }, main)
 
     local token = 0
     search:GetPropertyChangedSignal("Text"):Connect(function()
@@ -1196,22 +1440,6 @@ local function ivBuildGui()
                 ivRefilter()
             end
         end)
-    end)
-    slotBtn.Activated:Connect(function()
-        local idx = table.find(IV.Slots, IV.SlotFilter) or 1
-        idx = (idx % #IV.Slots) + 1
-        IV.SlotFilter = IV.Slots[idx]
-        slotBtn.Text = "Slot: " .. IV.SlotFilter
-        ivRefilter()
-    end)
-    fxBtn.Activated:Connect(function()
-        IV.HideFx = not IV.HideFx
-        fxBtn.Text = IV.HideFx and "Efek: OFF" or "Efek: ON"
-        ivRefilter()
-    end)
-    clearBtn.Activated:Connect(function()
-        ivResetAll()
-        ivRefreshMarks()
     end)
     grid:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
         if IV.Rendered < #IV.List
@@ -1239,12 +1467,22 @@ local function ivStart()
         warn("[R&8_DV] Item Visual dibatalkan: hook Net.wear.send gagal (supaya pakaian visual tidak terkirim ke server)")
         return false
     end
+    local host = ivFindHost()
+    if not host then
+        ivUnhook()
+        warn("[R&8_DV] Item Visual dibatalkan: tempat panel di menu utama tidak ditemukan (tidak membuat GUI baru)")
+        return false
+    end
+    if not (IV.Game and type(IV.Game.refresh) == "function") then
+        warn("[R&8_DV] Peringatan: Game.refresh tidak ditemukan, karakter mungkin tidak tergambar ulang")
+    end
     IV.Worn = worn
     IV.Ov = {}
+    IV.Selected, IV.TapId, IV.Filter, IV.Query = nil, nil, "Semua", ""
     IV.Active = true
     IV.Run += 1
     local run = IV.Run
-    ivBuildGui()
+    ivBuildGui(host)
     if Light.On then task.defer(lightEnable) end
     task.spawn(function()
         while IV.Active and IV.Run == run do
@@ -1254,22 +1492,20 @@ local function ivStart()
             task.wait(0.25)
         end
     end)
-    print("[R&8_DV] Item Visual START (client only), " .. #IV.Items .. " item pakaian"
-        .. (IV.Embedded and ", panel di menu utama" or ", panel melayang"))
+    print("[R&8_DV] Item Visual START (client only), " .. #IV.Items .. " item pakaian, panel di menu utama")
     return true
 end
 
 local function ivStop()
     IV.Active = false
     IV.Run += 1
-    if IV.Worn then ivResetAll() end
+    if IV.Worn then pcall(ivResetAll) end
     ivUnhook()
     for _, c in ipairs(IV.Conns) do pcall(function() c:Disconnect() end) end
     IV.Conns = {}
-    if IV.Gui then pcall(function() IV.Gui:Destroy() end) end
     if IV.Main then pcall(function() IV.Main:Destroy() end) end
-    IV.Gui, IV.Main, IV.Mini, IV.Grid, IV.WornScroll = nil, nil, nil, nil, nil
-    IV.Cells, IV.WornSig, IV.Ov = {}, "", {}
+    IV.Main, IV.Grid, IV.WornScroll, IV.ChipRow = nil, nil, nil, nil
+    IV.Cells, IV.WornSig, IV.Ov, IV.ChipBtns = {}, "", {}, {}
     print("[R&8_DV] Item Visual STOP, pakaian dikembalikan")
 end
 
@@ -1377,7 +1613,7 @@ feature("Name", "Set Visual Name")({
         ClientCard:Toggle("Kunci (pasang ulang jika ditimpa server)", "VN_Lock", false)
 
         local RoleCard = c:Card("Role (visual)", nil, "Shield", {
-            Subtitle = "Ikut tombol START yang sama. /help berganti daftar command role ini"
+            Subtitle = "Ikut tombol START yang sama. /help memakai panel asli game, isinya diganti sesuai role"
         })
         RoleCard:Dropdown("Role", "VN_Role", VN_ROLE_LIST, "(tidak diubah)")
         RoleCard:Input("Command Moderator", "RC_ModCmds", "pisahkan dengan spasi", "mute unmute tape untape warn tp bring")
@@ -1420,22 +1656,25 @@ feature("Item", "Item Visual")({
         IV.Toggle.Button = PanelCard:Button("Item Visual", "START", "Bolt", function()
             IV.Toggle.Toggle()
         end)
-        PanelCard:Button("Lepas Semua Visual", "RESET", "Check", function()
-            if IV.Active then ivResetAll() end
+        -- shortcut langsung dari kartu (tanpa harus scroll ke panel)
+        PanelCard:Button("Unwear All (lepas semua item)", "UNWEAR", "Check", function()
+            if IV.Active then ivUnwearAll(); ivRefreshMarks() end
         end)
-        PanelCard:Toggle("Tampilkan panel di menu utama (matikan = panel melayang)", "IV_Embed", true)
+        PanelCard:Button("Reset ke pakaian asli", "RESET", "Check", function()
+            if IV.Active then ivResetAll(); ivRefreshMarks() end
+        end)
     end),
 
     right = right(function(r)
         local HowCard = r:Card("Cara Pakai", nil, "Clock", {
-            Subtitle = "Panel muncul di bawah kartu Item Visual"
+            Subtitle = "Panel muncul di bawah kartu Item Visual (di dalam menu ini, tanpa GUI baru)"
         })
         HowCard:ActivityTimeline({
-            { Text = "Cari nama atau ID item di kolom search", Time = "1" },
-            { Text = "Tombol Slot = filter hat / shirt / feet dst (tap tap)", Time = "2" },
-            { Text = "Tap item = pakai, tap lagi = lepas", Time = "3" },
-            { Text = "Baris atas = pakaian yang sedang dipakai, tap = lepas", Time = "4" },
-            { Text = "Item bertanda * punya efek (slash, rapier, katana, speed, gali)", Time = "5" }
+            { Text = "Cari nama, ID, atau slot (head / mask / hair) di kolom search", Time = "1" },
+            { Text = "Chip filter: Semua, Dipakai, Efek, Head, Mask, Hair, Shirt, Pants, Feet, Hand, Back", Time = "2" },
+            { Text = "Tap item 1x = pilih, tap 2x = pakai / lepas (atau tombol PAKAI / LEPAS)", Time = "3" },
+            { Text = "Baris atas = item yang sedang dipakai (garis biru = visual), tap 2x = lepas", Time = "4" },
+            { Text = "UNWEAR ALL = lepas semua, RESET = balik ke pakaian asli", Time = "5" }
         })
 
         local NoteCard = r:Card("Catatan", nil, "Shield", {
