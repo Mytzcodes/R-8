@@ -14,7 +14,7 @@ local ImGui = loadstring(rawScript)()
 
 -- 2. Inisialisasi Jendela
 local UI = ImGui({
-    Title = "CHAT SPAMMER - IMGUI",
+    Title = "CHAT SPAMMER",
     BrandTitle = "R&8_DV",
     BrandSubtitle = "SPAM SUITE",
     Theme = "Minimalist Monochrome",
@@ -36,11 +36,11 @@ local ThemeChoices = UI.GetThemes and UI:GetThemes() or {
 }
 
 -- =========================================================================
--- LOGIKA SPAM (CLIENT SIDE)
+-- LOGIKA SPAM
 -- =========================================================================
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
+local LocalPlayer = Players.LocalPlayer
 
 local MAX_CHAT = 120 -- batas karakter chat game
 
@@ -58,14 +58,16 @@ local function getValue(flag, fallback)
     return fallback
 end
 
--- Cari kolom chat custom game ("Enter Message Here")
+-- METODE CLIENT: ketik di kolom chat milik game (TextBox "Input" di dalam Frame "Field"),
+-- lalu picu event FocusLost(enter) seperti pemain menekan Enter.
+-- Catatan: kolom itu PlaceholderText-nya kosong; tulisan "Enter Message Here" digambar custom.
 local cachedBox
 local function findChatBox()
     if cachedBox and cachedBox.Parent then return cachedBox end
-    local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pg then return nil end
     for _, v in ipairs(pg:GetDescendants()) do
-        if v:IsA("TextBox") and string.find(string.lower(v.PlaceholderText), "enter message") then
+        if v:IsA("TextBox") and v.Name == "Input" and v.Parent and v.Parent.Name == "Field" then
             cachedBox = v
             return v
         end
@@ -73,37 +75,61 @@ local function findChatBox()
     return nil
 end
 
--- Kirim chat: utama lewat kolom chat game, cadangan lewat chat bawaan Roblox
-local function sendChat(msg)
+local function sendClient(msg)
     msg = string.sub(msg, 1, MAX_CHAT)
-
     local box = findChatBox()
-    if box then
-        box.Text = msg
-        box:CaptureFocus()
-        task.wait()
-        box:ReleaseFocus(true) -- true = dianggap menekan Enter
-        if firesignal then
-            pcall(function() firesignal(box.FocusLost, true) end)
-        end
-        return true
+    if not box then return false end
+
+    box.Text = msg
+    if firesignal then
+        local ok = pcall(function() firesignal(box.FocusLost, true) end)
+        if ok then return true end
     end
 
-    if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-        local channels = TextChatService:FindFirstChild("TextChannels")
-        local general = channels and channels:FindFirstChild("RBXGeneral")
-        if general then
-            return pcall(function() general:SendAsync(msg) end)
-        end
-    else
-        local events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
-        local say = events and events:FindFirstChild("SayMessageRequest")
-        if say then
-            return pcall(function() say:FireServer(msg, "All") end)
+    -- cadangan jika executor tidak punya firesignal
+    box:CaptureFocus()
+    task.wait()
+    box.Text = msg
+    box:ReleaseFocus(true) -- true = dianggap menekan Enter
+    return true
+end
+
+-- METODE SERVER: kirim langsung ke TextChannel dunia lewat SendAsync,
+-- sama seperti fungsi send milik ChatUI game (tidak bergantung pada UI chat).
+-- Channel ada di TextChatService.WorldChannels.<nama dunia>.
+local function findWorldChannel()
+    local wc = TextChatService:FindFirstChild("WorldChannels")
+    if not wc then return nil end
+
+    -- prioritas: channel yang punya TextSource milik kita
+    for _, ch in ipairs(wc:GetChildren()) do
+        if ch:IsA("TextChannel") and ch:FindFirstChild(LocalPlayer.Name) then
+            return ch
         end
     end
+    -- cadangan: channel pertama yang ada
+    for _, ch in ipairs(wc:GetChildren()) do
+        if ch:IsA("TextChannel") then return ch end
+    end
+    return nil
+end
 
-    return false
+local function sendServer(msg)
+    msg = string.sub(msg, 1, MAX_CHAT)
+    local ch = findWorldChannel()
+    if not ch then return false end
+    local ok, err = pcall(function() ch:SendAsync(msg) end)
+    if not ok then warn("[R&8_DV] SendAsync error: " .. tostring(err)) end
+    return ok
+end
+
+-- Pilih metode kirim sesuai dropdown "Metode Kirim"
+local function sendChat(msg)
+    local method = getValue("SendMethod", "Server")
+    if method == "Client" then
+        return sendClient(msg)
+    end
+    return sendServer(msg)
 end
 
 -- Susun pesan: Auto Prefix = ` + angka acak 1-9 (berganti tiap pesan)
@@ -154,12 +180,14 @@ local function startSpam()
     if Spam.Running then return end
     Spam.Running = true
     setButtonText(true)
-    print("[R&8_DV] Spam START")
+    print("[R&8_DV] Spam START (metode sesuai dropdown)")
 
     Spam.Thread = task.spawn(function()
         while Spam.Running do
             if sendChat(buildMessage()) then
                 Spam.Sent += 1
+            else
+                warn("[R&8_DV] Gagal kirim: channel/kolom chat tidak ditemukan, pastikan sudah masuk world atau ganti Metode Kirim")
             end
             local delay = tonumber(getValue("SpamDelay", 3)) or 3
             task.wait(math.max(delay, 0.1))
@@ -180,13 +208,18 @@ if UI.Category then UI:Category("Spammer") end
 feature("Chat", "Chat Spam")({
     -- ---------------------------- TENGAH ----------------------------
     center = center(function(c)
-        c:Header("Chat Spammer", "Kirim chat otomatis via client dengan delay & prefix acak", "Client")
+        c:Header("Chat Spammer", "Pilih metode kirim: Server (SendAsync langsung) atau Client (lewat kolom chat game)", "Multi")
 
         c:StatRow({
-            { Icon = "Bolt",   Label = "Mode",   Value = "Client Side" },
+            { Icon = "Bolt",   Label = "Metode", Value = "Server/Client" },
             { Icon = "Clock",  Label = "Delay",  Value = "Custom" },
-            { Icon = "Shield", Label = "Status", Value = "Idle" }
+            { Icon = "Shield", Label = "Limit",  Value = "120 char" }
         })
+
+        local MethodCard = c:Card("Metode Kirim", nil, "Bolt", {
+            Subtitle = "Server = langsung SendAsync ke channel dunia | Client = isi kolom chat game + Enter"
+        })
+        MethodCard:Dropdown("Metode", "SendMethod", { "Server", "Client" }, "Server")
 
         local MsgCard = c:Card("Pesan Spam", nil, "Chat", {
             Subtitle = "Pisahkan beberapa pesan dengan tanda |  (contoh: halo | apa kabar)"
@@ -202,7 +235,7 @@ feature("Chat", "Chat Spam")({
         PrefixCard:Toggle("Aktifkan Auto Prefix", "AutoPrefix", false)
 
         local DelayCard = c:Card("Delay Spam", nil, "Clock", {
-            Subtitle = "Jeda antar pesan (detik). Terlalu cepat bisa membuat chat di-rate-limit"
+            Subtitle = "Jeda antar pesan (detik). Terlalu cepat bisa kena flood-check"
         })
         DelayCard:Slider("Delay", "SpamDelay", 0.5, 15, 3, " s", nil, 0.1)
     end),
@@ -225,8 +258,8 @@ feature("Chat", "Chat Spam")({
             Subtitle = "Ringkasan aktivitas spam"
         })
         InfoCard:ActivityTimeline({
-            { Text = "Client-side chat sender siap",  Time = "Now" },
-            { Text = "Kolom chat game auto-detect",   Time = "Now" }
+            { Text = "Metode kirim bisa diganti: Server / Client", Time = "Now" },
+            { Text = "Channel & kolom chat dideteksi otomatis", Time = "Now" }
         })
         if InfoCard.Button then
             InfoCard:Button("Reset Counter", "RESET", "Check", function()
