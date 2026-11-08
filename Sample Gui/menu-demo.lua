@@ -3065,9 +3065,8 @@ task.spawn(function()
     end
 end)
 
-
 -- =========================================================================
--- LOGIKA AUTO FARM (tanpa teleport; collect hanya kirim paket ambil)
+-- LOGIKA AUTO FARM v2 (FIXED: ByteNet Struct Resolver + Live Pos Tracker)
 -- =========================================================================
 local AF = {
     Running = false,
@@ -3093,6 +3092,17 @@ local AF = {
     PlacedCount = 0,
     BrokenCount = 0,
     CollectedCount = 0,
+    -- Live Tracker & Learned Packet Schemas
+    LastPos = { x = nil, y = nil },
+    Learned = {
+        placePkt = nil,   -- nama paket place di Shared.Net
+        placeSample = nil,-- contoh struktur tabelnya
+        breakPkt = nil,   -- nama paket punch/break di Shared.Net
+        breakSample = nil,
+        collectPkt = nil,
+        movePkt = nil,
+    },
+    NetHooked = false,
 }
 
 local AF_METHODS = {
@@ -3100,6 +3110,123 @@ local AF_METHODS = {
     "Method 1: Server Packet Direct (Net)",
     "Method 2: Client Game Handler + Packet"
 }
+
+-- 1. AUTO-HOOK SEMUA PAKET SHARED.NET UNTUK DETEKSI POSISI & SKEMA PLACE/BREAK ASLI
+local function afEnsureNetLearner()
+    if AF.NetHooked then return end
+    local Net = scGetNet()
+    if not Net then return end
+    AF.NetHooked = true
+
+    for pktName, pktObj in pairs(Net) do
+        if type(pktObj) == "table" and type(pktObj.send) == "function" and not pktObj._afLearnedHook then
+            local origSend = pktObj.send
+            if type(setreadonly) == "function" then pcall(setreadonly, pktObj, false) end
+            pcall(function()
+                pktObj._afLearnedHook = true
+                pktObj.send = function(arg1, arg2, arg3, ...)
+                    local lname = tostring(pktName):lower()
+
+                    -- Tangkap koordinat karakter real-time dari paket move
+                    if type(arg1) == "table" then
+                        local mx = tonumber(arg1.x or arg1.px or arg1.posX)
+                        local my = tonumber(arg1.y or arg1.py or arg1.posY)
+                        if mx and my and (lname:find("move") or lname:find("pos") or lname:find("state") or arg1.vx ~= nil or arg1.flags ~= nil) then
+                            -- Jika dalam piksel (> 200), konversi ke satuan tile
+                            if mx > 200 or my > 200 then
+                                local ts = (SC.Assets and SC.Assets.TileSize) or 32
+                                AF.LastPos.x = mx / ts
+                                AF.LastPos.y = my / ts
+                            else
+                                AF.LastPos.x = mx
+                                AF.LastPos.y = my
+                            end
+                            AF.Learned.movePkt = pktName
+                        end
+
+                        -- Tangkap skema paket Place / Break / Tile Action saat pemain klik manual 1x
+                        local tx = tonumber(arg1.x or arg1.tx or arg1.tileX or arg1.cx)
+                        local ty = tonumber(arg1.y or arg1.ty or arg1.tileY or arg1.cy)
+                        local itemId = tonumber(arg1.id or arg1.item or arg1.itemId or arg1.block or arg1.hand)
+                        if tx and ty and math.floor(tx) == tx and math.floor(ty) == ty and tx >= 0 and tx <= 200 and ty >= 0 and ty <= 200 then
+                            if not (lname:find("move") or lname:find("pos")) then
+                                if itemId and itemId ~= 18 and itemId > 0 then
+                                    AF.Learned.placePkt = pktName
+                                    local sample = {}
+                                    for k, v in pairs(arg1) do sample[k] = v end
+                                    AF.Learned.placeSample = sample
+                                elseif itemId == 18 or lname:find("punch") or lname:find("hit") or lname:find("break") or lname:find("act") or lname:find("tile") then
+                                    AF.Learned.breakPkt = pktName
+                                    local sample = {}
+                                    for k, v in pairs(arg1) do sample[k] = v end
+                                    AF.Learned.breakSample = sample
+                                end
+                            end
+                        end
+                    end
+                    return origSend(arg1, arg2, arg3, ...)
+                end
+            end)
+        end
+    end
+end
+
+-- 2. MULTI-FALLBACK POSISI KARAKTER (Anti-Stuck "Menunggu posisi karakter")
+local function afGetMyTilePos()
+    afEnsureNetLearner()
+
+    -- Prioritas 1: Dari fungsi asli espMyPos()
+    local ex, ey = espMyPos()
+    if type(ex) == "number" and type(ey) == "number" then
+        AF.LastPos.x, AF.LastPos.y = ex, ey
+        return ex, ey
+    end
+
+    -- Prioritas 2: Dari paket Net.move terakhir yang tertangkap
+    if type(AF.LastPos.x) == "number" and type(AF.LastPos.y) == "number" then
+        return AF.LastPos.x, AF.LastPos.y
+    end
+
+    -- Prioritas 3: Scan semua fungsi di SC.Game dan SC.State untuk mencari pasangan upvalue (x, y)
+    pcall(scFindWorn)
+    if type(debug) == "table" and type(debug.getupvalues) == "function" then
+        for _, root in ipairs({ SC.State, SC.Game }) do
+            if type(root) == "table" then
+                for _, fn in pairs(root) do
+                    if type(fn) == "function" then
+                        local ok, ups = pcall(debug.getupvalues, fn)
+                        if ok and type(ups) == "table" then
+                            for _, v in pairs(ups) do
+                                if type(v) == "table" and type(rawget(v, "x")) == "number" and type(rawget(v, "y")) == "number" then
+                                    local px, py = v.x, v.y
+                                    if px > 200 or py > 200 then
+                                        local ts = (SC.Assets and SC.Assets.TileSize) or 32
+                                        return px / ts, py / ts
+                                    end
+                                    return px, py
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Prioritas 4: Hitung dari posisi UI Sprite lokal relatif terhadap layer Tiles
+    local layer = espLayer()
+    local myEntry = espEntryOf(LocalPlayer.UserId)
+    if layer and myEntry and typeof(myEntry.group) == "Instance" then
+        local s = (ESP.Probe and ESP.Probe.Parent and (ESP.Probe.AbsoluteSize.X / 100)) or 1
+        if s <= 0 then s = 1 end
+        local px = espPX() * s
+        local center = myEntry.group.AbsolutePosition + (myEntry.group.AbsoluteSize * 0.5)
+        local rel = (center - layer.AbsolutePosition) / px
+        return rel.X, rel.Y
+    end
+
+    return nil, nil
+end
 
 local function afScanBackpackCounts()
     local counts = {}
@@ -3167,35 +3294,10 @@ local function afScanBackpackCounts()
         end
     end
 
-    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-    local gg = pg and pg:FindFirstChild("GameGui")
-    if gg then
-        for _, d in ipairs(gg:GetDescendants()) do
-            if d:IsA("GuiObject") then
-                local itemId = tonumber(d:GetAttribute("ItemId") or d:GetAttribute("Id") or d.Name:match("^Slot_(%d+)$") or d.Name:match("^Item_(%d+)$"))
-                if itemId and SC.DB and SC.DB[itemId] then
-                    local cnt = tonumber(d:GetAttribute("Count") or d:GetAttribute("Amount"))
-                    if not cnt then
-                        for _, sub in ipairs(d:GetDescendants()) do
-                            if sub:IsA("TextLabel") then
-                                local n = tonumber(sub.Text:match("(%d+)"))
-                                if n and n > 0 then cnt = n; break end
-                            end
-                        end
-                    end
-                    if cnt and cnt > 0 then
-                        counts[itemId] = math.max(counts[itemId] or 0, cnt)
-                    end
-                end
-            end
-        end
-    end
-
     AF.BPCounts = counts
     return counts
 end
 
--- Offset grid (dx,dy) -> tile dunia. Atas di grid = tile di atas karakter (y berkurang)
 local function afGetWorldTileFromOffset(myX, myY, dx, dy)
     local baseTx = math.floor(myX + 0.5)
     local baseTy = math.floor(myY + 0.5)
@@ -3203,6 +3305,8 @@ local function afGetWorldTileFromOffset(myX, myY, dx, dy)
     return baseTx + dx, baseTy + (dy * yDir)
 end
 
+-- 3. FIXED TILE CHECKER (Mencegah SmartVerify false-negative yang bikin pukulan berhenti di Hit 1)
+-- Return: hasBlock (bool), blockId (number), canVerify (bool - true hanya jika sumber data map valid)
 local function afCheckTileHasBlock(tx, ty)
     pcall(scFindWorn)
 
@@ -3211,60 +3315,37 @@ local function afCheckTileHasBlock(tx, ty)
             for _, fnName in ipairs({ "getTile", "tileAt", "getBlock", "blockAt", "fgAt", "getFg", "cellAt" }) do
                 local fn = rawget(obj, fnName)
                 if type(fn) == "function" then
-                    local ok, res, res2 = pcall(fn, tx, ty)
-                    if not ok then ok, res, res2 = pcall(fn, obj, tx, ty) end
+                    local ok, res = pcall(fn, tx, ty)
+                    if not ok then ok, res = pcall(fn, obj, tx, ty) end
                     if ok and res ~= nil then
-                        if type(res) == "number" then return res > 0, res end
+                        if type(res) == "number" then return res > 0, res, true end
                         if type(res) == "table" then
                             local fg = tonumber(res.fg or res.id or res.block or res[1] or 0) or 0
-                            if fg > 0 then return true, fg end
-                            return false, 0
+                            return fg > 0, fg, true
                         end
                     end
                 end
             end
 
-            for _, tblName in ipairs({ "tiles", "fg", "blocks", "map", "grid", "world" }) do
-                local t = rawget(obj, tblName)
-                if type(t) == "table" then
-                    local row = t[ty] or t[tx]
-                    if type(row) == "table" then
-                        local cell = (t[ty] and t[ty][tx]) or (t[tx] and t[tx][ty])
-                        if type(cell) == "number" then return cell > 0, cell end
-                        if type(cell) == "table" then
-                            local fg = tonumber(cell.fg or cell.id or cell.block or cell[1] or 0) or 0
-                            return fg > 0, fg
-                        end
-                    end
-                    local keyStr = tostring(tx) .. "," .. tostring(ty)
-                    local keyColon = tostring(tx) .. ":" .. tostring(ty)
-                    local cell = t[keyStr] or t[keyColon]
-                    if type(cell) == "number" then return cell > 0, cell end
-                    if type(cell) == "table" then
-                        local fg = tonumber(cell.fg or cell.id or cell.block or cell[1] or 0) or 0
-                        return fg > 0, fg
-                    end
-                end
-            end
-        end
-    end
-
-    local layer = espLayer()
-    if layer then
-        local tilePx = espPX()
-        local targetX = tx * tilePx
-        local targetY = ty * tilePx
-        for _, ch in ipairs(layer:GetChildren()) do
-            if ch:IsA("GuiObject") and ch.Visible then
-                local nm = ch.Name:lower()
-                if not nm:find("^bg") then
-                    local cx = ch.Position.X.Offset
-                    local cy = ch.Position.Y.Offset
-                    if math.abs(cx - targetX) <= 6 and math.abs(cy - targetY) <= 6 then
-                        if ch:IsA("ImageLabel") and (ch.Image == "" or ch.ImageTransparency >= 0.98) then
-                            -- tile kosong
-                        else
-                            return true, 1
+            -- Cek juga di dalam upvalue fungsi-fungsi SC.Game / SC.State
+            if type(debug) == "table" and type(debug.getupvalues) == "function" then
+                for _, fn in pairs(obj) do
+                    if type(fn) == "function" then
+                        local okU, ups = pcall(debug.getupvalues, fn)
+                        if okU and type(ups) == "table" then
+                            for _, up in pairs(ups) do
+                                if type(up) == "table" then
+                                    local row = rawget(up, ty)
+                                    if type(row) == "table" and rawget(row, tx) ~= nil then
+                                        local cell = rawget(row, tx)
+                                        if type(cell) == "number" then return cell > 0, cell, true end
+                                        if type(cell) == "table" and (cell.fg ~= nil or cell.id ~= nil) then
+                                            local fg = tonumber(cell.fg or cell.id or 0) or 0
+                                            return fg > 0, fg, true
+                                        end
+                                    end
+                                end
+                            end
                         end
                     end
                 end
@@ -3272,19 +3353,58 @@ local function afCheckTileHasBlock(tx, ty)
         end
     end
 
-    return false, 0
+    -- Jika tabel memori map belum ketemu, kembalikan canVerify = false supaya SmartVerify tidak salah skip!
+    return false, 0, false
+end
+
+-- Helper menyusun payload sesuai skema ByteNet yang berhasil dipelajari
+local function afBuildPayload(sample, tx, ty, itemId, actionStr)
+    if type(sample) == "table" then
+        local out = {}
+        for k, v in pairs(sample) do
+            local lk = tostring(k):lower()
+            if lk == "x" or lk == "tx" or lk == "tilex" or lk == "cx" then
+                out[k] = tx
+            elseif lk == "y" or lk == "ty" or lk == "tiley" or lk == "cy" then
+                out[k] = ty
+            elseif lk == "id" or lk == "item" or lk == "itemid" or lk == "block" or lk == "hand" then
+                out[k] = itemId
+            elseif type(v) == "string" and (lk == "action" or lk == "type" or lk == "mode") then
+                out[k] = actionStr
+            else
+                out[k] = v
+            end
+        end
+        return out
+    end
+    return { x = tx, y = ty, tx = tx, ty = ty, id = itemId, item = itemId, itemId = itemId, tileX = tx, tileY = ty, action = actionStr }
 end
 
 local function afSendPlace(tx, ty, itemId)
+    afEnsureNetLearner()
     local Net = scGetNet()
     local method = AF.Method
 
+    -- Set active item di SC.State jika ada
+    if type(SC.State) == "table" then
+        pcall(function()
+            if SC.State.selectedItem ~= nil then SC.State.selectedItem = itemId end
+            if SC.State.activeItem ~= nil then SC.State.activeItem = itemId end
+        end)
+    end
+
     if Net and (method == "Dual Method (Client + Server Packet)" or method == "Method 1: Server Packet Direct (Net)") then
-        for _, k in ipairs({ "place", "tile", "use", "build", "put", "action", "interact" }) do
-            local pkt = Net[k]
-            if type(pkt) == "table" and type(pkt.send) == "function" then
-                pcall(pkt.send, { x = tx, y = ty, id = itemId, item = itemId, tileX = tx, tileY = ty, action = "place" })
-                pcall(pkt.send, tx, ty, itemId)
+        -- Jika sniffer sudah menemukan paket Place atau Tile asli, kirim tepat ke paket itu
+        local targetPktName = AF.Learned.placePkt or AF.Learned.breakPkt
+        if targetPktName and Net[targetPktName] and type(Net[targetPktName].send) == "function" then
+            local payload = afBuildPayload(AF.Learned.placeSample or AF.Learned.breakSample, tx, ty, itemId, "place")
+            pcall(Net[targetPktName].send, payload)
+        else
+            for _, k in ipairs({ "place", "placeTile", "tile", "use", "build", "put", "action", "interact", "hit", "punch" }) do
+                local pkt = Net[k]
+                if type(pkt) == "table" and type(pkt.send) == "function" then
+                    pcall(pkt.send, { x = tx, y = ty, id = itemId, item = itemId, itemId = itemId, tx = tx, ty = ty, tileX = tx, tileY = ty })
+                end
             end
         end
     end
@@ -3296,7 +3416,6 @@ local function afSendPlace(tx, ty, itemId)
                     local fn = rawget(obj, fnName)
                     if type(fn) == "function" then
                         pcall(fn, tx, ty, itemId)
-                        pcall(fn, obj, tx, ty, itemId)
                     end
                 end
                 if type(rawget(obj, "call")) == "function" then
@@ -3308,17 +3427,22 @@ local function afSendPlace(tx, ty, itemId)
 end
 
 local function afSendBreak(tx, ty)
+    afEnsureNetLearner()
     local Net = scGetNet()
     local method = AF.Method
     local punchId = 18
 
     if Net and (method == "Dual Method (Client + Server Packet)" or method == "Method 1: Server Packet Direct (Net)") then
-        for _, k in ipairs({ "punch", "hit", "break", "breakTile", "damage", "tile", "use", "action" }) do
-            local pkt = Net[k]
-            if type(pkt) == "table" and type(pkt.send) == "function" then
-                pcall(pkt.send, { x = tx, y = ty, id = punchId, item = punchId, tileX = tx, tileY = ty, action = "punch" })
-                pcall(pkt.send, tx, ty, punchId)
-                pcall(pkt.send, { x = tx, y = ty })
+        local targetPktName = AF.Learned.breakPkt or AF.Learned.placePkt
+        if targetPktName and Net[targetPktName] and type(Net[targetPktName].send) == "function" then
+            local payload = afBuildPayload(AF.Learned.breakSample or AF.Learned.placeSample, tx, ty, punchId, "punch")
+            pcall(Net[targetPktName].send, payload)
+        else
+            for _, k in ipairs({ "punch", "hit", "break", "breakTile", "damage", "tile", "use", "action", "interact" }) do
+                local pkt = Net[k]
+                if type(pkt) == "table" and type(pkt.send) == "function" then
+                    pcall(pkt.send, { x = tx, y = ty, id = punchId, item = punchId, itemId = punchId, tx = tx, ty = ty, tileX = tx, tileY = ty })
+                end
             end
         end
     end
@@ -3329,8 +3453,7 @@ local function afSendBreak(tx, ty)
                 for _, fnName in ipairs({ "punch", "hit", "breakTile", "onPunch", "tapTile", "swing" }) do
                     local fn = rawget(obj, fnName)
                     if type(fn) == "function" then
-                        pcall(fn, tx, ty)
-                        pcall(fn, obj, tx, ty)
+                        pcall(fn, tx, ty, punchId)
                     end
                 end
                 if type(rawget(obj, "call")) == "function" then
@@ -3342,7 +3465,6 @@ local function afSendBreak(tx, ty)
     end
 end
 
--- Auto collect TANPA teleport: karakter tidak pernah dipindah, hanya kirim paket ambil
 local function afRunAutoCollect(originX, originY)
     if not AF.AutoCollect or Spam.PausedByMod then return end
     local Net = scGetNet()
@@ -3380,8 +3502,8 @@ local function afRunAutoCollect(originX, originY)
         for _, k in ipairs({ "collect", "pickup", "takeDrop", "dropCollect" }) do
             local pkt = Net[k]
             if type(pkt) == "table" and type(pkt.send) == "function" then
+                pcall(pkt.send, { id = d.uid, uid = d.uid, x = d.x, y = d.y })
                 pcall(pkt.send, d.uid)
-                pcall(pkt.send, { id = d.uid, x = d.x, y = d.y })
             end
         end
         AF.CollectedCount += 1
@@ -3410,6 +3532,7 @@ end
 local function afStart()
     if AF.Running then return end
     scBuildItems()
+    afEnsureNetLearner()
 
     if not AF.SelectedBlockId or not SC.DB or not SC.DB[AF.SelectedBlockId] then
         notifyClient("Auto Farm", "Pilih Block terlebih dahulu dari daftar BP!", 4)
@@ -3431,10 +3554,10 @@ local function afStart()
                 afUpdateButtonAndStatus("⏸ PAUSED: Menunggu Moderator keluar...")
                 task.wait(0.5)
             else
-                local mx, my = espMyPos()
+                local mx, my = afGetMyTilePos()
                 if not mx or not my then
-                    afUpdateButtonAndStatus("⏳ Menunggu posisi karakter di dalam World...")
-                    task.wait(0.5)
+                    afUpdateButtonAndStatus("⏳ Gerakkan karakter 1 langkah agar koordinat terbaca...")
+                    task.wait(0.3)
                 else
                     local originX, originY = mx, my
                     local activeTargets = {}
@@ -3444,8 +3567,8 @@ local function afStart()
                         local tx, ty = afGetWorldTileFromOffset(originX, originY, offset.dx, offset.dy)
                         activeTargets[#activeTargets + 1] = { tx = tx, ty = ty, dx = offset.dx, dy = offset.dy }
 
-                        local alreadyHasBlock = afCheckTileHasBlock(tx, ty)
-                        if alreadyHasBlock then
+                        local alreadyHasBlock, _, canVerify = afCheckTileHasBlock(tx, ty)
+                        if canVerify and alreadyHasBlock and getValue("AF_SmartVerify", true) then
                             afUpdateButtonAndStatus(string.format("⏭ Tile (%+d,%+d) sudah ada block -> Skip Place", offset.dx, offset.dy))
                         else
                             afUpdateButtonAndStatus(string.format("🧱 Place %s di Tile (%+d,%+d)", blockName, offset.dx, offset.dy))
@@ -3459,25 +3582,19 @@ local function afStart()
                         if not AF.Running or Spam.PausedByMod then break end
                         local tx, ty = tgt.tx, tgt.ty
                         local maxHits = math.max(tonumber(AF.BreakHits) or 4, 1)
-                        local extraVerifyRetries = 3
 
-                        for hitIdx = 1, (maxHits + extraVerifyRetries) do
+                        for hitIdx = 1, maxHits do
                             if not AF.Running or Spam.PausedByMod then break end
 
-                            if hitIdx > 1 then
-                                local stillThere = afCheckTileHasBlock(tx, ty)
-                                if not stillThere and getValue("AF_SmartVerify", true) then
+                            if hitIdx > 1 and getValue("AF_SmartVerify", true) then
+                                local stillThere, _, canVerify = afCheckTileHasBlock(tx, ty)
+                                if canVerify and not stillThere then
                                     afUpdateButtonAndStatus(string.format("✔ Tile (%+d,%+d) hancur pada hit ke-%d -> Skip", tgt.dx, tgt.dy, hitIdx - 1))
                                     break
                                 end
                             end
 
-                            if hitIdx > maxHits then
-                                afUpdateButtonAndStatus(string.format("⏳ Tile (%+d,%+d) belum hancur, jeda verifikasi...", tgt.dx, tgt.dy))
-                                task.wait(math.max(AF.BreakDelay * 0.75, 0.08))
-                            end
-
-                            afUpdateButtonAndStatus(string.format("⛏ Break Tile (%+d,%+d) [Hit %d/%d]", tgt.dx, tgt.dy, math.min(hitIdx, maxHits), maxHits))
+                            afUpdateButtonAndStatus(string.format("⛏ Break Tile (%+d,%+d) [Hit %d/%d]", tgt.dx, tgt.dy, hitIdx, maxHits))
                             afSendBreak(tx, ty)
                             task.wait(math.max(AF.BreakDelay, 0.05))
                         end
