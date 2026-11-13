@@ -6,7 +6,7 @@
     loadstring(game:HttpGet("https://raw.githubusercontent.com/Mytzcodes/R-8/main/Sample%20Gui/Loader.lua"))()
 ]]
 
-local BASE_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/main/Sample%20Gui/"
+local BASE_URL = "https://raw.githubusercontent.com/Mytzcodes/R-8/main/RDC/"
 _G.DEFIT_BLOX_BASE_URL = BASE_URL
 _G.DEFIT_BLOX_MODULES = _G.DEFIT_BLOX_MODULES or {}
 
