@@ -2679,35 +2679,176 @@ feature("Misc", "DEFIT BLOX")({
                         if not okM or not okRes then warnings += 1 end
                     end
 
-                    -- Step 09: Export Debugger Remotes, Spy Packets & Decompiled Scripts into same folder
+                    -- Step 09: Export Debugger Remotes, Spy Packets, Client Scripts & Functional Dependencies
                     if not transport.disconnected then
                         bridgeProg(88, "[09/09] Exporting remotes, spy packets & client scripts...")
+                        local knownRemotes = {}
                         pcall(function()
                             local remotesList = {}
                             if type(S.ScanRemotes) == "function" then
                                 for _, r in ipairs(S.ScanRemotes()) do
+                                    local rPath = fullName(r)
+                                    knownRemotes[r.Name] = rPath
                                     table.insert(remotesList, {
                                         class_name = r.ClassName,
                                         name = r.Name,
-                                        full_name = fullName(r),
+                                        full_name = rPath,
                                     })
                                 end
                             end
                             transport:sendChunkedList("INTERACTION_OBSERVER", "debugger_remotes", remotesList, "dbg_remotes")
                         end)
 
-                        pcall(function()
-                            local pktExport = {}
-                            for _, p in ipairs(S.Packets or {}) do
-                                table.insert(pktExport, {
-                                    dir = p.dir,
-                                    method = p.method,
-                                    remote = p.remoteName,
-                                    path = p.remotePath,
-                                    args = p.argsText,
+                        local functionalEdges = {}
+                        local seenFuncEdge = {}
+                        local function addFuncEdge(srcNode, dstNode, rel, conf)
+                            local key = tostring(srcNode) .. "|" .. tostring(rel) .. "|" .. tostring(dstNode)
+                            if not seenFuncEdge[key] then
+                                seenFuncEdge[key] = true
+                                table.insert(functionalEdges, {
+                                    source = tostring(srcNode),
+                                    target = tostring(dstNode),
+                                    relation = rel,
+                                    confidence = conf or "direct",
                                 })
                             end
+                        end
+
+                        -- Automated signal/handler probing (no manual trigger needed)
+                        bridgeProg(86, "[09/09] Auto-probing UI buttons, prompts & remote handlers...")
+                        pcall(function()
+                            local getConnsFn = (getgenv and getgenv().getconnections) or getconnections
+                            local fireSigFn = (getgenv and getgenv().firesignal) or firesignal
+                            local handlerDump = {}
+                            local skipPattern = { "leave", "exit", "quit", "reset", "buy", "purchase", "robux", "delete", "destroy", "teleport", "logout" }
+
+                            local function isSafeToProbe(nameStr)
+                                local lower = tostring(nameStr or ""):lower()
+                                for _, bad in ipairs(skipPattern) do
+                                    if lower:find(bad, 1, true) then
+                                        return false
+                                    end
+                                end
+                                return true
+                            end
+
+                            local function inspectSignal(instPath, signalName, signalObj, allowFire)
+                                if type(getConnsFn) == "function" then
+                                    local okC, conns = pcall(getConnsFn, signalObj)
+                                    if okC and type(conns) == "table" then
+                                        for idx, conn in ipairs(conns) do
+                                            local fn = conn.Function
+                                            local srcInfo = "unknown"
+                                            local closureLines = {}
+                                            if type(fn) == "function" then
+                                                local okI, s, l, n = pcall(debug.info, fn, "sln")
+                                                if okI then
+                                                    srcInfo = string.format("%s:%s (%s)", tostring(s), tostring(l), tostring(n or "anon"))
+                                                end
+                                                if type(dumpClosure) == "function" then
+                                                    pcall(function()
+                                                        closureLines = dumpClosure(fn, 0)
+                                                    end)
+                                                end
+                                                addFuncEdge(instPath, srcInfo, "signal_" .. signalName, "direct")
+                                            end
+                                            table.insert(handlerDump, {
+                                                instance = instPath,
+                                                signal = signalName,
+                                                connection_index = idx,
+                                                handler_info = srcInfo,
+                                                closure_dump = table.concat(closureLines, "\n"),
+                                            })
+                                            if allowFire and type(conn.Fire) == "function" then
+                                                pcall(conn.Fire, conn)
+                                            end
+                                        end
+                                    end
+                                elseif allowFire and type(fireSigFn) == "function" then
+                                    pcall(fireSigFn, signalObj)
+                                end
+                            end
+
+                            local lp = game:GetService("Players").LocalPlayer
+                            local pgui = lp and lp:FindFirstChildOfClass("PlayerGui")
+                            if pgui then
+                                local btnCount = 0
+                                for _, desc in ipairs(pgui:GetDescendants()) do
+                                    if desc:IsA("GuiButton") and btnCount < 120 then
+                                        btnCount += 1
+                                        local dPath = fullName(desc)
+                                        local safeProbe = isSafeToProbe(desc.Name)
+                                        inspectSignal(dPath, "MouseButton1Click", desc.MouseButton1Click, safeProbe)
+                                        inspectSignal(dPath, "Activated", desc.Activated, safeProbe)
+                                        if btnCount % 15 == 0 then task.wait() end
+                                    end
+                                end
+                            end
+
+                            for _, r in ipairs(S.ScanRemotes()) do
+                                if r:IsA("RemoteEvent") then
+                                    inspectSignal(fullName(r), "OnClientEvent", r.OnClientEvent, false)
+                                end
+                            end
+
+                            for _, desc in ipairs(game:GetService("Workspace"):GetDescendants()) do
+                                if desc:IsA("ProximityPrompt") then
+                                    inspectSignal(fullName(desc), "Triggered", desc.Triggered, false)
+                                elseif desc:IsA("ClickDetector") then
+                                    inspectSignal(fullName(desc), "MouseClick", desc.MouseClick, false)
+                                end
+                            end
+
+                            if #handlerDump > 0 then
+                                transport:sendChunkedList("INTERACTION_OBSERVER", "signal_handlers", handlerDump, "dbg_handlers")
+                            end
+                            task.wait(0.4) -- allow deferred packet hooks to flush
+                        end)
+
+                        pcall(function()
+                            local pktExport = {}
+                            local obsEvents = {}
+                            for _, p in ipairs(S.Packets or {}) do
+                                local argList = {}
+                                for _, a in ipairs(p.args or {}) do
+                                    table.insert(argList, {
+                                        type = typeof(a.raw),
+                                        value = a.text,
+                                        decoded = a.decoded,
+                                        encoding = a.how,
+                                    })
+                                end
+                                table.insert(pktExport, {
+                                    id = p.id,
+                                    timestamp = p.time,
+                                    dir = p.dir,
+                                    method = p.method,
+                                    remote = p.name,
+                                    path = p.path,
+                                    class_name = p.class,
+                                    caller = tostring(p.caller or ""),
+                                    repeats = p.repeats or 0,
+                                    args = argList,
+                                })
+                                table.insert(obsEvents, {
+                                    timestamp = tostring(p.time or "00:00:00"),
+                                    event = string.format("%s %s", tostring(p.dir or "OUT"), tostring(p.method or "FireServer")),
+                                    target = tostring(p.path or p.name or "UnknownRemote"),
+                                    detail = { caller = tostring(p.caller or ""), args = argList },
+                                })
+                                if p.path then
+                                    addFuncEdge(
+                                        (p.caller and p.caller ~= "" and p.caller ~= "game") and p.caller or "ClientRuntime",
+                                        p.path,
+                                        "runtime_" .. tostring(p.method or "remote"),
+                                        "observed"
+                                    )
+                                end
+                            end
                             transport:sendChunkedList("INTERACTION_OBSERVER", "debugger_packets", pktExport, "dbg_packets")
+                            if #obsEvents > 0 then
+                                transport:sendEnvelope("/api/observations", "RUNTIME_OBSERVER", { events = obsEvents })
+                            end
                         end)
 
                         if type(S.ScanScripts) == "function" and type(S.Decompile) == "function" then
@@ -2716,21 +2857,59 @@ feature("Misc", "DEFIT BLOX")({
                                 local scriptItems = {}
                                 for i, sObj in ipairs(rawScripts) do
                                     local pathStr = fullName(sObj)
-                                    if not (pathStr:find("CorePackages") or pathStr:find("CoreGui%.RobloxGui")) then
-                                        local okDec, src = pcall(S.Decompile, sObj)
+                                    local cat = (type(S.ScriptCategory) == "function") and S.ScriptCategory(pathStr) or "Game"
+                                    if cat ~= "Roblox" and not (pathStr:find("CorePackages") or pathStr:find("CoreGui%.RobloxGui")) then
+                                        local okDec, src, method = pcall(S.Decompile, sObj)
+                                        local safeSrc = "-- [decompile unavailable: " .. tostring(method or src) .. "]"
+                                        local usedMethod = tostring(method or "unavailable")
+                                        if okDec and type(src) == "string" and #src > 0 then
+                                            if usedMethod == "bytecode" then
+                                                safeSrc = bytesToHex(src)
+                                            else
+                                                safeSrc = src
+                                            end
+                                            -- Extract functional require() / remote / UI event edges
+                                            for reqTarget in safeSrc:gmatch("require%s*%(([^%)\r\n]+)%)") do
+                                                local cleaned = reqTarget:gsub("^%s+", ""):gsub("%s+$", "")
+                                                if #cleaned > 0 and #cleaned <= 120 then
+                                                    addFuncEdge(pathStr, cleaned, "requires_module", "direct")
+                                                end
+                                            end
+                                            for remCall in safeSrc:gmatch("([%w_]+):FireServer") do
+                                                addFuncEdge(pathStr, knownRemotes[remCall] or remCall, "fires_remote", "direct")
+                                            end
+                                            for remCall in safeSrc:gmatch("([%w_]+):InvokeServer") do
+                                                addFuncEdge(pathStr, knownRemotes[remCall] or remCall, "invokes_remote", "direct")
+                                            end
+                                            for remEvt in safeSrc:gmatch("([%w_]+)%.OnClientEvent") do
+                                                addFuncEdge(knownRemotes[remEvt] or remEvt, pathStr, "on_client_event", "direct")
+                                            end
+                                            for _, uiEvt in ipairs({"MouseButton1Click", "Activated", "MouseButton1Down", "Triggered"}) do
+                                                for uiObj in safeSrc:gmatch("([%w_]+)%." .. uiEvt .. ":Connect") do
+                                                    addFuncEdge(uiObj, pathStr, "ui_" .. uiEvt, "direct")
+                                                end
+                                            end
+                                        end
                                         table.insert(scriptItems, {
                                             name = sObj.Name,
                                             class_name = sObj.ClassName,
                                             full_name = pathStr,
-                                            source = okDec and type(src) == "string" and src or "-- [decompile unavailable]",
+                                            method = usedMethod,
+                                            source = safeSrc,
                                         })
                                     end
-                                    if i % 25 == 0 then
+                                    if i % 20 == 0 then
                                         bridgeProg(math.min(95, 88 + math.floor((i / math.max(1, #rawScripts)) * 7)), string.format("[09/09] Decompiling scripts %d/%d...", i, #rawScripts))
                                         task.wait()
                                     end
                                 end
                                 transport:sendChunkedList("ASSET_REFERENCE_ANALYZER", "decompiled_scripts", scriptItems, "dbg_scripts")
+                            end)
+                        end
+
+                        if #functionalEdges > 0 then
+                            pcall(function()
+                                transport:sendChunkedList("DEPENDENCY_ANALYZER", "edges", functionalEdges, "func_dep")
                             end)
                         end
                     end
