@@ -78,21 +78,25 @@ local function suv(fn, idx, val)
 end
 
 local function isValidGT(t)
-    return type(t) == "table"
-        and type(t.fg) == "table"
-        and type(t.w) == "number"
-        and type(t.h) == "number"
-        and type(t.goTo) == "function"
+    if type(t) ~= "table" then return false end
+    return type(rawget(t, "fg")) == "table"
+        and type(rawget(t, "w")) == "number"
+        and type(rawget(t, "h")) == "number"
+        and type(rawget(t, "goTo")) == "function"
 end
 
 local function isValidNet(t)
-    return type(t) == "table"
-        and type(t.tile) == "table" and type(t.tile.send) == "function"
-        and type(t.move) == "table" and type(t.move.send) == "function"
+    if type(t) ~= "table" then return false end
+    local tile = rawget(t, "tile")
+    local move = rawget(t, "move")
+    return type(tile) == "table" and type(rawget(tile, "send")) == "function"
+        and type(move) == "table" and type(rawget(move, "send")) == "function"
 end
 
 local function isValidItemDB(t)
-    return type(t) == "table" and type(t[2]) == "table" and type(t[2].name) == "string"
+    if type(t) ~= "table" then return false end
+    local entry = rawget(t, 2)
+    return type(entry) == "table" and type(rawget(entry, "name")) == "string"
 end
 
 local function inspectUpvalues(gt)
@@ -114,26 +118,30 @@ local function inspectUpvalues(gt)
     end
 end
 
-local function discoverGame()
-    if type(getgc) == "function" then
-        local ok, gc = pcall(getgc, true)
-        if ok and type(gc) == "table" then
-            for i = 1, #gc do
-                local v = gc[i]
-                if type(v) == "table" then
-                    if not H.gt and isValidGT(v) then
-                        H.gt = v
-                    elseif not H.Net and isValidNet(v) then
-                        H.Net = v
-                    elseif not H.ItemDB and isValidItemDB(v) then
-                        H.ItemDB = v
+local function pcall(discoverGame)
+    pcall(function()
+        if type(getgc) == "function" then
+            local ok, gc = pcall(getgc, true)
+            if ok and type(gc) == "table" then
+                for i = 1, #gc do
+                    local v = gc[i]
+                    if type(v) == "table" then
+                        if not H.gt and isValidGT(v) then
+                            H.gt = v
+                        elseif not H.Net and isValidNet(v) then
+                            H.Net = v
+                        elseif not H.ItemDB and isValidItemDB(v) then
+                            H.ItemDB = v
+                        end
+                        if H.gt and H.Net and H.ItemDB then break end
                     end
-                    if H.gt and H.Net and H.ItemDB then break end
                 end
             end
         end
-    end
-    if H.gt then inspectUpvalues(H.gt) end
+        if H.gt then
+            pcall(inspectUpvalues, H.gt)
+        end
+    end)
     return H.gt ~= nil
 end
 
@@ -234,7 +242,7 @@ local function pickRandomValidTile()
     return candidates[math.random(1, #candidates)]
 end
 
-discoverGame()
+pcall(discoverGame)
 
 -- State shared antar card
 local state = {
@@ -265,7 +273,7 @@ feature("Home", "Home")({
             Subtitle = "Posisi karakter saat ini dan status validasi tile"
         })
         InfoCard:Button("Refresh / Scan Ulang Modul", "SCAN", "Bolt", function()
-            local ok = discoverGame()
+            local ok = pcall(discoverGame)
             state.lastStatus = ok and ("World terdeteksi: " .. tostring(H.gt.name)) or "Modul belum ditemukan"
             if state.renderMapFn then state.renderMapFn(true) end
         end)
@@ -378,7 +386,7 @@ feature("Teleports", "Teleport")({
         end, 0.2)
         PatrolCard:Button("Start Random Valid Teleport", "START", "Bolt", function()
             if state.patrolOn then return end
-            if not H.gt then discoverGame() end
+            if not H.gt then pcall(discoverGame) end
             state.patrolOn = true
             UI:SetValue("ValidStatusDisplay", "Patrol aktif (interval aman)", true)
             task.spawn(function()
@@ -409,7 +417,7 @@ feature("Teleports", "Teleport")({
         })
         MapCard:Input("Map Anchor (Embedded)", "__MAP_ANCHOR__", "__MAP_ANCHOR_KEY__", "__MAP_ANCHOR_KEY__")
         MapCard:Button("Render Ulang Peta", "REFRESH", "Visuals", function()
-            discoverGame()
+            pcall(discoverGame)
             if state.renderMapFn then state.renderMapFn(true) end
         end)
     end)
