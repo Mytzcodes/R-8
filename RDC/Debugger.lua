@@ -392,7 +392,7 @@ if F.hookmm and F.getnc then
     pcall(function()
         local handler = function(self, ...)
             local m = F.getnc()
-            if remoteMethods[m] and typeof(self) == "Instance" and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+            if remoteMethods[m] and typeof(self) == "Instance" and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction") or self:IsA("UnreliableRemoteEvent")) then
                 local mine = F.checkcaller and F.checkcaller()
                 if S.IncludeExecutor or not mine then
                     local args = table.pack(...)
@@ -409,7 +409,7 @@ if F.hookmm and F.getnc then
         local oldIdx
         local idxHandler = function(self, key)
             local v = oldIdx(self, key)
-            if remoteMethods[key] and typeof(self) == "Instance" and type(v) == "function" and (self.ClassName == "RemoteEvent" or self.ClassName == "RemoteFunction") then
+            if remoteMethods[key] and typeof(self) == "Instance" and type(v) == "function" and (self.ClassName == "RemoteEvent" or self.ClassName == "RemoteFunction" or self.ClassName == "UnreliableRemoteEvent") then
                 local mine = F.checkcaller and F.checkcaller()
                 if S.IncludeExecutor or not mine then
                     local w = function(s, ...)
@@ -465,6 +465,43 @@ local function wrapRF(r)
         end)
     end
 end
+-- Client-side Kick call blocker (active only while S.BlockKick == true, i.e. during export).
+-- Only intercepts LocalPlayer:Kick() calls made by client scripts; server-side kicks cannot be stopped.
+S.BlockKick = false
+S.BlockedKicks = {}
+if F.hookmm and F.getnc then
+    pcall(function()
+        local oldKickNC
+        local function logKick(reason)
+            table.insert(S.BlockedKicks, {time = os.date("%H:%M:%S"), reason = tostring(reason)})
+        end
+        local kickHandler = function(self, ...)
+            if S.BlockKick and F.getnc() == "Kick" and typeof(self) == "Instance" and self == game:GetService("Players").LocalPlayer then
+                if not (F.checkcaller and F.checkcaller()) then
+                    logKick((...))
+                    return nil
+                end
+            end
+            return oldKickNC(self, ...)
+        end
+        oldKickNC = F.hookmm(game, "__namecall", F.newcc and F.newcc(kickHandler) or kickHandler)
+    end)
+    pcall(function()
+        local oldKickIdx
+        local kickIdx = function(self, key)
+            local v = oldKickIdx(self, key)
+            if S.BlockKick and key == "Kick" and typeof(self) == "Instance" and self == game:GetService("Players").LocalPlayer and type(v) == "function" then
+                local w = function(_, reason)
+                    table.insert(S.BlockedKicks, {time = os.date("%H:%M:%S"), reason = tostring(reason)})
+                end
+                return F.newcc and F.newcc(w) or w
+            end
+            return v
+        end
+        oldKickIdx = F.hookmm(game, "__index", F.newcc and F.newcc(kickIdx) or kickIdx)
+    end)
+end
+
 function S.ScanRemotes()
     local list, seen = {}, {}
     local function consider(d)
@@ -2531,6 +2568,7 @@ feature("Misc", "DEFIT BLOX")({
                 return
             end
             isExporting = true
+            S.BlockKick = true
             task.spawn(function()
                 local okRun, err = pcall(function()
                     local Config = getDefitMod("config")
@@ -2750,7 +2788,13 @@ feature("Misc", "DEFIT BLOX")({
                                                         closureLines = dumpClosure(fn, 0)
                                                     end)
                                                 end
+                                                local dumpText = table.concat(closureLines, "\n")
                                                 addFuncEdge(instPath, srcInfo, "signal_" .. signalName, "direct")
+                                                for remName, remFull in pairs(knownRemotes) do
+                                                    if #remName >= 3 and dumpText:find(remName, 1, true) then
+                                                        addFuncEdge(instPath, remFull, "handler_references_remote", "inferred")
+                                                    end
+                                                end
                                             end
                                             table.insert(handlerDump, {
                                                 instance = instPath,
@@ -2786,7 +2830,7 @@ feature("Misc", "DEFIT BLOX")({
                             end
 
                             for _, r in ipairs(S.ScanRemotes()) do
-                                if r:IsA("RemoteEvent") then
+                                if r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent") then
                                     inspectSignal(fullName(r), "OnClientEvent", r.OnClientEvent, false)
                                 end
                             end
@@ -2851,16 +2895,21 @@ feature("Misc", "DEFIT BLOX")({
                             end
                         end)
 
-                        if type(S.ScanScripts) == "function" and type(S.Decompile) == "function" then
+                        if type(S.ScanScripts) == "function" and type(S.Source) == "function" then
                             pcall(function()
                                 local rawScripts = S.ScanScripts()
                                 local scriptItems = {}
-                                for i, sObj in ipairs(rawScripts) do
-                                    local pathStr = fullName(sObj)
-                                    local cat = (type(S.ScriptCategory) == "function") and S.ScriptCategory(pathStr) or "Game"
+                                for i, sEntry in ipairs(rawScripts) do
+                                    local sObj = (type(sEntry) == "table" and sEntry.inst) or sEntry
+                                    local pathStr = (type(sEntry) == "table" and sEntry.path) or fullName(sObj)
+                                    local sName = (type(sEntry) == "table" and sEntry.name) or sObj.Name
+                                    local sClass = (type(sEntry) == "table" and sEntry.class) or sObj.ClassName
+                                    local cat = (type(sEntry) == "table" and sEntry.cat)
+                                        or ((type(S.ScriptCategory) == "function") and S.ScriptCategory(pathStr))
+                                        or "Game"
                                     if cat ~= "Roblox" and not (pathStr:find("CorePackages") or pathStr:find("CoreGui%.RobloxGui")) then
-                                        local okDec, src, method = pcall(S.Decompile, sObj)
-                                        local safeSrc = "-- [decompile unavailable: " .. tostring(method or src) .. "]"
+                                        local okDec, src, method = pcall(S.Source, sObj)
+                                        local safeSrc = "-- [source unavailable: " .. tostring(method or src) .. "]"
                                         local usedMethod = tostring(method or "unavailable")
                                         if okDec and type(src) == "string" and #src > 0 then
                                             if usedMethod == "bytecode" then
@@ -2889,21 +2938,29 @@ feature("Misc", "DEFIT BLOX")({
                                                     addFuncEdge(uiObj, pathStr, "ui_" .. uiEvt, "direct")
                                                 end
                                             end
+                                            -- Map references to known (even obfuscated) remote names in source/constants
+                                            for remName, remFull in pairs(knownRemotes) do
+                                                if #remName >= 3 and safeSrc:find(remName, 1, true) then
+                                                    addFuncEdge(pathStr, remFull, "references_remote", "inferred")
+                                                end
+                                            end
                                         end
                                         table.insert(scriptItems, {
-                                            name = sObj.Name,
-                                            class_name = sObj.ClassName,
+                                            name = sName,
+                                            class_name = sClass,
                                             full_name = pathStr,
                                             method = usedMethod,
                                             source = safeSrc,
                                         })
                                     end
-                                    if i % 20 == 0 then
-                                        bridgeProg(math.min(95, 88 + math.floor((i / math.max(1, #rawScripts)) * 7)), string.format("[09/09] Decompiling scripts %d/%d...", i, #rawScripts))
+                                    if i % 15 == 0 then
+                                        bridgeProg(math.min(95, 88 + math.floor((i / math.max(1, #rawScripts)) * 7)), string.format("[09/09] Extracting scripts %d/%d...", i, #rawScripts))
                                         task.wait()
                                     end
                                 end
-                                transport:sendChunkedList("ASSET_REFERENCE_ANALYZER", "decompiled_scripts", scriptItems, "dbg_scripts")
+                                if #scriptItems > 0 then
+                                    transport:sendChunkedList("ASSET_REFERENCE_ANALYZER", "decompiled_scripts", scriptItems, "dbg_scripts")
+                                end
                             end)
                         end
 
@@ -2929,6 +2986,10 @@ feature("Misc", "DEFIT BLOX")({
                     end
                 end)
                 isExporting = false
+                S.BlockKick = false
+                if #S.BlockedKicks > 0 then
+                    say(string.format("Blocked %d client-side Kick call(s) during export", #S.BlockedKicks))
+                end
                 if not okRun then
                     setBridgeBanner("Export error: " .. tostring(err))
                     bridgeProg(0, "Error: " .. tostring(err))
